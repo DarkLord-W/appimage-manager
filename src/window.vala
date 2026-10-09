@@ -1472,40 +1472,202 @@ public class MainWindow : Gtk.ApplicationWindow {
             show_msg ("没有条目被认领。");
     }
 
+    /**
+     * 创建启动器。
+     *
+     * 默认走「填写式」：逐个弹对话框，预填好启发式信息，用户确认或改。
+     * 勾了「之后都用默认值」后剩余的静默创建。
+     *
+     * 图标不再自动提取 —— 默认空，由用户在对话框里选。这样主流程上
+     * 没有任何解包操作，毫秒级完成、永不卡死。
+     */
     private void do_create (AppEntry[] targets) {
-        // 图标还没提取的，先提取
-        var need_icon = new GenericArray<AppEntry> ();
-        foreach (var e in targets)
-            if (!e.icon_extracted)
-                need_icon.add (e);
+        var created = new GenericArray<string> ();
+        int ok = 0;
+        int skipped = 0;
+        bool cancel_all = false;
+        bool default_rest = false;
 
-        if (need_icon.length > 0) {
-            // 让窗口持有强引用，跨过 do_extract_icons 内部的 store.rescan()
-            pending_entries = new GLib.List<AppEntry> ();
-            foreach (var e in targets)
-                pending_entries.append (e);
+        int total = targets.length;
+        for (int i = 0; i < targets.length; i++) {
+            var e = targets[i];
 
-            do_extract_icons (need_icon.steal (), () => {
-                run_pending_create ();
-                return false;
-            });
-        } else {
-            finish_create (targets);
+            if (e.match != MatchState.NEW) {
+                skipped++;
+                continue;
+            }
+
+            if (default_rest) {
+                // 静默用默认值创建
+                if (create_silently (e))
+                    ok++;
+                else
+                    skipped++;
+                continue;
+            }
+
+            var d = Dialogs.create_launcher (this, e, config, i + 1, total);
+
+            switch (d.action) {
+                case Dialogs.CreateAction.CANCEL:
+                    cancel_all = true;
+                    break;
+
+                case Dialogs.CreateAction.SKIP:
+                    skipped++;
+                    break;
+
+                case Dialogs.CreateAction.CREATE_AND_DEFAULT:
+                    default_rest = true;
+                    // 落到下面一起创建
+                    if (create_with_decision (e, d))
+                        ok++;
+                    else
+                        skipped++;
+                    break;
+
+                default:
+                    if (create_with_decision (e, d))
+                        ok++;
+                    else
+                        skipped++;
+                    break;
+            }
+
+            if (cancel_all)
+                break;
         }
+
+        store.rescan ();
+
+        string msg = "✓ 已创建 %d 个启动器".printf (ok);
+        if (skipped > 0)
+            msg += " · 跳过 %d 个".printf (skipped);
+        if (cancel_all)
+            msg += " · 已中止";
+        if (ok == 0 && skipped > 0 && !cancel_all)
+            msg = "没有创建任何启动器（跳过 %d 个）".printf (skipped);
+
+        if (ok > 0)
+            show_info (msg);
+        else
+            show_msg (msg);
     }
 
-    /** 图标提取完成后接着创建启动器（用窗口持有的强引用） */
-    private void run_pending_create () {
-        if (pending_entries == null)
-            return;
+    /** 用对话框里填好的字段创建 */
+    private bool create_with_decision (AppEntry e, Dialogs.CreateDecision d) {
+        // 执行位：没有就询问（会改动用户的文件，必须显式确认）
+        if (!ensure_executable (e))
+            return false;
 
-        var list = new GenericArray<AppEntry> ();
-        foreach (var e in pending_entries)
-            list.add (e);
+        string content = Prefill.build_preview (
+            d.fields, e.path, config.write_marker ());
 
-        pending_entries = null;   // 释放窗口的强引用
+        string verr = DesktopFiles.validate_content (content);
+        if (verr != "") {
+            show_msg ("「%s」的内容没通过 desktop-file-validate：\n%s"
+                      .printf (d.fields.name, verr));
+            return false;
+        }
 
-        finish_create (list.steal ());
+        string target = GLib.Path.build_filename (AppPath.applications_dir (),
+                                                  d.desktop_basename);
+        string? werr;
+        DesktopFiles.write_atomic (target, content, out werr);
+        if (werr != null) {
+            show_msg ("写入失败：%s".printf (werr));
+            return false;
+        }
+
+        // 记入事务历史，便于「修复历史」里还原
+        var tx = new Journal.Tx ();
+        tx.txid = Journal.new_txid ();
+        tx.operation = "create";
+        tx.started_at = Journal.now_iso ();
+        var it = new Journal.Item ();
+        it.orig_path = target;
+        it.new_path = target;
+        it.actions = { "fix" };
+        it.status = "done";
+        it.sha256_after = Journal.sha256 (target);
+        tx.set_items ({ it });
+        tx.write_journal ();
+        tx.commit ();
+
+        DesktopFiles.refresh_menu (config.should_update_database ());
+        return true;
+    }
+
+    /** 不弹对话框，直接用预填值创建 */
+    private bool create_silently (AppEntry e) {
+        if (!ensure_executable (e))
+            return false;
+
+        var fields = Prefill.from_appimage (e.path);
+        fields.name = e.get_best_name ();
+
+        string content = Prefill.build_preview (
+            fields, e.path, config.write_marker ());
+
+        if (DesktopFiles.validate_content (content) != "")
+            return false;
+
+        var taken = new GenericArray<string> ();
+        foreach (var de in DesktopFiles.scan_directory (AppPath.applications_dir ()))
+            taken.add (de.basename);
+        string base = Prefill.ensure_unique_slug (e.path, taken.steal ());
+        string target = GLib.Path.build_filename (AppPath.applications_dir (), base);
+
+        string? werr;
+        DesktopFiles.write_atomic (target, content, out werr);
+        if (werr != null)
+            return false;
+
+        DesktopFiles.refresh_menu (config.should_update_database ());
+        return true;
+    }
+
+    private bool exec_ask_disabled = false;
+
+    /**
+     * 确保 AppImage 有执行位。
+     *
+     * 没有就弹窗询问 —— 加执行位是在改动用户的文件，不能默默做。
+     * 用户可以拒绝，我们照样创建启动器（只是点开时系统会拒绝执行）。
+     */
+    private bool ensure_executable (AppEntry e) {
+        if (AppPath.file_is_executable (e.path))
+            return true;
+
+        if (exec_ask_disabled)
+            return true;   // 本批次已选过「不再询问」
+
+        var dlg = new Gtk.MessageDialog (this, Gtk.DialogFlags.MODAL,
+            Gtk.MessageType.QUESTION, Gtk.ButtonsType.NONE,
+            "这个 AppImage 没有执行权限");
+        dlg.format_secondary_text (
+            "%s\n\n"
+            .printf (AppPath.shorten (e.path))
+            + "桌面启动器点开后无法运行。要现在给它加上执行位吗？\n\n"
+            + "⚠ 这会修改文件权限（chmod +x），是在改动你的文件。");
+
+        var never = new Gtk.CheckButton.with_label ("本批次中不再询问");
+        dlg.get_content_area ().add (never);
+        dlg.get_content_area ().show_all ();
+
+        dlg.add_button ("跳过，不加", Gtk.ResponseType.REJECT);
+        dlg.add_button ("仍然创建", Gtk.ResponseType.CLOSE);
+        dlg.add_button ("加上执行位", Gtk.ResponseType.OK);
+        dlg.set_default_response (Gtk.ResponseType.OK);
+
+        int r = dlg.run ();
+        exec_ask_disabled = never.get_active ();
+        dlg.destroy ();
+
+        if (r == Gtk.ResponseType.OK)
+            AppPath.file_chmod_exec (e.path);
+
+        return true;   // 三个选项都继续创建
     }
 
     private void finish_create (AppEntry[] targets) {

@@ -61,7 +61,7 @@ namespace AppImageExtract {
     public const int DEFAULT_EXTRACT_TIMEOUT_SEC = 20;
 
     /**
-     * 运行子进程并等待结束，带硬超时。
+     * 跑一个子进程并等待结束，带硬超时。
      *
      * 返回真实退出码；启动失败 / 超时 / 取消均返回 -1，超时时 *timed_out 置 true。
      *
@@ -70,14 +70,11 @@ namespace AppImageExtract {
      * 工作线程调用时由主循环派发，到点 force_exit()（SIGKILL）保证 wait()
      * 一定会返回；从主线程调用时 wait() 会把主循环卡住，定时器无法派发
      * （见 test_launch 的注释）。
-     */
-    /**
-     * 跑一个子进程，带硬超时。
      *
-     * @param cwd 子进程的工作目录。**必须显式指定**：
-     *            `--appimage-extract` 是把内容解到「当前目录」的，
-     *            不设的话会落到本程序被启动时的目录里 —— 实测有
-     *            用户因此被写进 2.1 GB 的解包残留。
+     * @param cwd 子进程的工作目录。解包时必须显式指定 work_dir：
+     *            `--appimage-extract` 把内容解到「当前目录」，不设的话会
+     *            落到本程序被启动时的目录 —— 实测有用户因此被写进
+     *            2.1 GB 的解包残留。
      */
     public static int run_process (string[] argv, int timeout_sec,
                                    GLib.Cancellable? cancel,
@@ -104,36 +101,29 @@ namespace AppImageExtract {
             return -1;
         }
 
-        bool killed = false;
-        uint timeout_id = 0;
-        if (timeout_sec > 0) {
-            timeout_id = GLib.Timeout.add ((uint) timeout_sec * 1000, () => {
-                killed = true;
+        // 不用 GLib.Timeout 做超时。
+        //
+        // 原因：g_subprocess_wait 不会泵主上下文，所以如果本函数跑在主线程
+        // 上（例如「测试启动」），主循环被卡住 → Timeout 永远不派发 →
+        // 超时形同虚设，进程可能永久阻塞。
+        //
+        // 改成自轮询：任何线程、有没有主循环都成立。
+        int64 deadline = 0;
+        if (timeout_sec > 0)
+            deadline = GLib.get_monotonic_time ()
+                     + (int64) timeout_sec * 1000000;
+
+        while (!proc.get_if_exited ()) {
+            if (cancel != null && cancel.is_cancelled ()) {
                 proc.force_exit ();
-                return false;
-            });
-        }
-
-        bool waited = false;
-        try {
-            waited = proc.wait (cancel);
-        } catch (GLib.Error e) {
-            waited = false;
-        }
-
-        // 超时源若已触发，回调返回后它已自行销毁，再 remove 会告警
-        if (timeout_id != 0 && !killed)
-            GLib.Source.remove (timeout_id);
-
-        if (!waited) {
-            // 被取消（或 wait 失败）：确保子进程已死再返回
-            proc.force_exit ();
-            return -1;
-        }
-
-        if (killed) {
-            timed_out = true;
-            return -1;
+                return -1;
+            }
+            if (deadline != 0 && GLib.get_monotonic_time () > deadline) {
+                timed_out = true;
+                proc.force_exit ();
+                return -1;
+            }
+            GLib.Thread.usleep (50000);   // 50ms
         }
 
         if (!proc.get_if_exited ())

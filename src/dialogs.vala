@@ -99,6 +99,372 @@ namespace Dialogs {
      * 编辑 .desktop 的字段，并实时预览将要写入的内容。
      * @return 实际写入路径；未改动或取消返回 null
      */
+
+    /* ══════════════════════════════════════════════════════════════
+     *  创建启动器（填写式）
+     *
+     *  设计原则：默认路径上不做任何解包。图标要用户自己选，元数据要用户
+     *  自己填。解包（--appimage-extract）降级为一个显式按钮 —— 它慢、
+     *  而且对不认这个参数的运行时会卡住，不该出现在主流程里。
+     * ══════════════════════════════════════════════════════════════ */
+
+    public enum CreateAction {
+        CREATE,               // 创建这一条
+        SKIP,                 // 跳过这一条，继续下一条
+        CANCEL,               // 中止整个批次
+        CREATE_AND_DEFAULT    // 创建这一条，且剩余都用默认值
+    }
+
+    public class CreateDecision : GLib.Object {
+        public CreateAction action = CreateAction.SKIP;
+        public Prefill.Fields fields;
+        public string icon_path = "";        // 已安装到缓存后的最终路径
+        public string desktop_basename = "";
+    }
+
+    /** 把用户选中的图片复制进图标缓存，返回最终路径；失败返回 "" */
+    private string install_chosen_icon (string src, string slug, AppConfig cfg) {
+        if (src == "" || !AppPath.exists (src))
+            return "";
+
+        string lower = GLib.Path.get_basename (src).down ();
+        string ext = lower.has_suffix (".svg") ? "svg"
+                   : (lower.has_suffix (".xpm") ? "xpm" : "png");
+
+        string dir = cfg.icon_dir ();
+        if (!AppPath.ensure_dir (dir))
+            return "";
+
+        string dest = GLib.Path.build_filename (dir, "%s.%s".printf (slug, ext));
+
+        try {
+            AppPath.file_copy (src, dest, true);
+            return dest;
+        } catch {
+            return "";
+        }
+    }
+
+    /** 图片文件选择器 */
+    private string? pick_image_file (Gtk.Window parent) {
+        var chooser = new Gtk.FileChooserDialog (
+            "选择图标文件", parent, Gtk.FileChooserAction.OPEN,
+            "取消", Gtk.ResponseType.CANCEL,
+            "选择", Gtk.ResponseType.ACCEPT);
+        chooser.set_modal (true);
+
+        var images = new Gtk.FileFilter ();
+        images.set_name ("图片 (png / svg / xpm)");
+        images.add_mime_type ("image/png");
+        images.add_mime_type ("image/svg+xml");
+        images.add_mime_type ("image/x-xpixmap");
+        images.add_pattern ("*.png");
+        images.add_pattern ("*.svg");
+        images.add_pattern ("*.xpm");
+        images.add_pattern ("*.PNG");
+        images.add_pattern ("*.SVG");
+        chooser.add_filter (images);
+
+        var all = new Gtk.FileFilter ();
+        all.set_name ("所有文件");
+        all.add_pattern ("*");
+        chooser.add_filter (all);
+
+        string? picked = null;
+        if (chooser.run () == Gtk.ResponseType.ACCEPT)
+            picked = chooser.get_filename ();
+        chooser.destroy ();
+        return picked;
+    }
+
+    /**
+     * 创建启动器对话框。
+     *
+     * 返回非 null 表示用户做了决定（创建 / 跳过 / 中止）。
+     * 调用方按 action 决定后续动作。
+     */
+    public CreateDecision create_launcher (Gtk.Window parent, AppEntry entry,
+                                           AppConfig cfg, int index = 1,
+                                           int total = 1) {
+        var decision = new CreateDecision ();
+        decision.fields = Prefill.from_appimage (entry.path);
+        decision.fields.name = entry.get_best_name ();
+
+        var slug = AppPath.slugify (entry.basename);
+        var taken = new GenericArray<string> ();
+        foreach (var d in DesktopFiles.scan_directory (AppPath.applications_dir ()))
+            taken.add (d.basename);
+        decision.desktop_basename = Prefill.ensure_unique_slug (
+            entry.path, taken.steal ());
+
+        string title = total > 1
+            ? "创建启动器 (%d/%d) — %s".printf (index, total, entry.get_best_name ())
+            : "创建启动器 — %s".printf (entry.get_best_name ());
+
+        var dlg = new_dialog (parent, title, 780, 640);
+        var content = dlg.get_content_area ();
+        content.set_border_width (12);
+
+        var flow = new Gtk.Box (Gtk.Orientation.VERTICAL, 10);
+
+        /* ── 顶部：图标预览 + 字段网格 ─────────────────────────── */
+
+        var top = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 14);
+
+        var left = new Gtk.Box (Gtk.Orientation.VERTICAL, 6);
+        left.set_size_request (132, -1);
+
+        var icon_img = new Gtk.Image.from_icon_name ("application-x-executable",
+                                                     Gtk.IconSize.DIALOG);
+        icon_img.set_pixel_size (96);
+        icon_img.set_size_request (96, 96);
+        left.pack_start (icon_img, false, false, 0);
+
+        var icon_btns = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 4);
+        var icon_pick = new Gtk.Button.with_label ("选择…");
+        var icon_clear = new Gtk.Button.with_label ("清除");
+        icon_btns.pack_start (icon_pick, true, true, 0);
+        icon_btns.pack_start (icon_clear, true, true, 0);
+        left.pack_start (icon_btns, false, false, 0);
+
+        var icon_hint = new Gtk.Label ("未设置图标");
+        icon_hint.get_style_context ().add_class ("dim-label");
+        icon_hint.set_ellipsize (Pango.EllipsizeMode.MIDDLE);
+        icon_hint.set_max_width_chars (18);
+        left.pack_start (icon_hint, false, false, 0);
+
+        top.pack_start (left, false, false, 0);
+
+        var grid = new Gtk.Grid ();
+        grid.set_column_spacing (10);
+        grid.set_row_spacing (8);
+        grid.set_hexpand (true);
+
+        var f_name = new Gtk.Entry ();
+        f_name.set_text (decision.fields.name);
+        f_name.set_placeholder_text ("显示在菜单里的名称");
+
+        var f_exec = new Gtk.Entry ();
+        f_exec.set_text (decision.fields.exec_line);
+        f_exec.get_style_context ().add_class ("cell-mono");
+
+        var f_icon = new Gtk.Entry ();
+        f_icon.set_editable (false);
+        f_icon.set_placeholder_text ("（未设置，使用系统通用图标）");
+
+        var cat_combo = new Gtk.ComboBoxText.with_entry ();
+        foreach (string c in Prefill.category_choices ())
+            cat_combo.append_text (c);
+        ((Gtk.Entry) cat_combo.get_child ()).set_text (decision.fields.categories);
+
+        var f_comment = new Gtk.Entry ();
+        f_comment.set_placeholder_text ("一句话描述，可留空");
+
+        var f_wm = new Gtk.Entry ();
+        f_wm.set_text (decision.fields.startup_wm_class);
+
+        int row = 0;
+        grid.attach (mk_label ("名称"), 0, row, 1, 1);
+        grid.attach (f_name, 1, row++, 1, 1);
+        grid.attach (mk_label ("命令"), 0, row, 1, 1);
+        grid.attach (f_exec, 1, row++, 1, 1);
+        grid.attach (mk_label ("图标"), 0, row, 1, 1);
+        grid.attach (f_icon, 1, row++, 1, 1);
+        grid.attach (mk_label ("分类"), 0, row, 1, 1);
+        grid.attach (cat_combo, 1, row++, 1, 1);
+        grid.attach (mk_label ("备注"), 0, row, 1, 1);
+        grid.attach (f_comment, 1, row++, 1, 1);
+        grid.attach (mk_label ("窗口类"), 0, row, 1, 1);
+        grid.attach (f_wm, 1, row++, 1, 1);
+
+        var f_term = new Gtk.CheckButton.with_label ("在终端中启动");
+        f_term.active = decision.fields.terminal;
+        grid.attach (f_term, 1, row++, 1, 1);
+
+        top.pack_start (grid, true, true, 0);
+        flow.pack_start (top, false, false, 0);
+
+        /* ── 可选：从 AppImage 提取内置元数据 ──────────────────── */
+
+        var extract_row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8);
+        var extract_btn = new Gtk.Button.with_label ("尝试提取内置元数据");
+        extract_btn.set_tooltip_text (
+            "解包 AppImage 读取它自带的名称 / 图标 / 分类。\n"
+            + "较慢（可能几十秒），且对旧格式或自定义运行时会失败 ——\n"
+            + "有 %d 秒硬超时，不会卡住界面。".printf (
+                AppImageExtract.DEFAULT_EXTRACT_TIMEOUT_SEC));
+        extract_row.pack_start (extract_btn, false, false, 0);
+
+        var extract_note = new Gtk.Label (
+            "仅在你需要更完整的元数据时使用");
+        extract_note.get_style_context ().add_class ("dim-label");
+        extract_row.pack_start (extract_note, false, false, 0);
+        flow.pack_start (extract_row, false, false, 0);
+
+        /* ── 预览 ──────────────────────────────────────────────── */
+
+        var prev_view = mk_textview ();
+        var prev_frame = mk_frame (
+            "将写入 " + AppPath.shorten (
+                GLib.Path.build_filename (AppPath.applications_dir (),
+                                          decision.desktop_basename)),
+            mk_scrolled (prev_view, 190), 190);
+        flow.pack_start (prev_frame, true, true, 0);
+
+        /* ── 底部选项 ──────────────────────────────────────────── */
+
+        var default_rest = new Gtk.CheckButton.with_label (
+            "之后都用默认值创建，不再逐个询问");
+        flow.pack_start (default_rest, false, false, 0);
+
+        content.pack_start (flow, true, true, 0);
+
+        /* ── 逻辑 ──────────────────────────────────────────────── */
+
+        string current_icon = "";
+
+        void refresh_preview () {
+            decision.fields.name = f_name.text.strip ();
+            decision.fields.exec_line = f_exec.text.strip ();
+            decision.fields.icon = current_icon;
+            decision.fields.categories = ((Gtk.Entry) cat_combo.get_child ()).text.strip ();
+            decision.fields.comment = f_comment.text.strip ();
+            decision.fields.startup_wm_class = f_wm.text.strip ();
+            decision.fields.terminal = f_term.active;
+
+            put_buffer (prev_view, Prefill.build_preview (
+                decision.fields, entry.path, cfg.write_marker ()));
+        }
+
+        void set_icon (string path) {
+            current_icon = path;
+            f_icon.set_text (AppPath.shorten (path));
+            if (path != "" && AppPath.exists (path)) {
+                try {
+                    var pb = new Gdk.Pixbuf.from_file_at_scale (path, 96, 96, true);
+                    icon_img.set_from_pixbuf (pb);
+                } catch {
+                    icon_img.set_from_icon_name ("dialog-warning",
+                                                 Gtk.IconSize.DIALOG);
+                }
+                icon_hint.set_text (GLib.Path.get_basename (path));
+            } else {
+                icon_img.set_from_icon_name ("application-x-executable",
+                                             Gtk.IconSize.DIALOG);
+                icon_hint.set_text ("未设置图标");
+            }
+            refresh_preview ();
+        }
+
+        icon_pick.clicked.connect (() => {
+            string? p = pick_image_file (dlg);
+            if (p == null)
+                return;
+            string installed = install_chosen_icon (p, slug, cfg);
+            if (installed == "") {
+                info (dlg, "无法安装图标",
+                      "复制到图标缓存失败：\n%s".printf (p));
+                return;
+            }
+            set_icon (installed);
+        });
+
+        icon_clear.clicked.connect (() => set_icon (""));
+
+        f_name.changed.connect (refresh_preview);
+        f_exec.changed.connect (refresh_preview);
+        f_comment.changed.connect (refresh_preview);
+        f_wm.changed.connect (refresh_preview);
+        f_term.toggled.connect (refresh_preview);
+        ((Gtk.Entry) cat_combo.get_child ()).changed.connect (refresh_preview);
+
+        /* ── 提取（后台线程 + 可取消）─────────────────────────── */
+
+        extract_btn.clicked.connect (() => {
+            var prog = Dialogs.progress (dlg, "正在提取内置元数据");
+            prog.set_progress (0, 1, entry.basename);
+
+            string work = GLib.Path.build_filename (
+                AppPath.tmp_extract_dir (),
+                "%s-%u".printf (slug, (uint)(GLib.get_real_time () % 100000)));
+
+            var cancel = new GLib.Cancellable ();
+
+            var th = new GLib.Thread<void*> ("extract-meta", () => {
+                var einfo = AppImageExtract.run (entry.path, work, cancel,
+                    AppImageExtract.DEFAULT_EXTRACT_TIMEOUT_SEC);
+                bool ok = einfo.ok;
+                string err = einfo.error;
+
+                string m_name = einfo.name;
+                string m_comment = einfo.comment;
+                string m_cats = einfo.categories;
+                string m_wm = einfo.startup_wm_class;
+                string? m_icon = null;
+                if (ok)
+                    m_icon = AppImageExtract.install_icon (einfo, cfg);
+                einfo.cleanup_extract ();
+
+                GLib.Idle.add (() => {
+                    prog.finish ();
+                    if (!ok) {
+                        info (dlg, "提取失败",
+                              err != "" ? err : "未能读取到内置元数据。\n"
+                              + "这很常见 —— 可以直接手工填写上面的字段。");
+                        return false;
+                    }
+                    if (m_name != "")
+                        f_name.set_text (m_name);
+                    if (m_comment != "")
+                        f_comment.set_text (m_comment);
+                    if (m_cats != "")
+                        ((Gtk.Entry) cat_combo.get_child ()).set_text (m_cats);
+                    if (m_wm != "")
+                        f_wm.set_text (m_wm);
+                    if (m_icon != null)
+                        set_icon (m_icon);
+                    refresh_preview ();
+                    info (dlg, "提取完成",
+                          "已用 AppImage 内置的元数据填充字段，可以直接改。");
+                    return false;
+                });
+                return null;
+            });
+        });
+
+        /* ── 按钮 ──────────────────────────────────────────────── */
+
+        var cancel_btn = add_button (dlg, "取消", Gtk.ResponseType.CANCEL);
+        cancel_btn.set_tooltip_text ("中止整个批次，不再处理剩余条目");
+
+        var skip_btn = add_button (dlg, "跳过", Gtk.ResponseType.REJECT);
+        skip_btn.set_tooltip_text ("不创建这一条，继续处理下一个");
+
+        var create_btn = add_button (dlg, "创建", Gtk.ResponseType.OK);
+        create_btn.get_style_context ().add_class ("suggested-action");
+        dlg.set_default_response (Gtk.ResponseType.OK);
+
+        set_icon ("");
+        dlg.show_all ();
+        refresh_preview ();
+
+        int resp = dlg.run ();
+        bool want_default = default_rest.get_active ();
+        dlg.destroy ();
+
+        if (resp == Gtk.ResponseType.OK) {
+            decision.action = want_default ? CreateAction.CREATE_AND_DEFAULT
+                                           : CreateAction.CREATE;
+            decision.icon_path = current_icon;
+        } else if (resp == Gtk.ResponseType.REJECT) {
+            decision.action = CreateAction.SKIP;
+        } else {
+            decision.action = CreateAction.CANCEL;
+        }
+
+        return decision;
+    }
+
     public string? edit_launcher (Gtk.Window parent, AppEntry entry, AppConfig cfg) {
         if (entry.entry == null)
             return null;
