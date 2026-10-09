@@ -1,0 +1,425 @@
+/* ══════════════════════════════════════════════════════════════════════════
+ * AppImage Manager — GTK3 样式表
+ *
+ * 设计约束：
+ *   1. 全部颜色取自 GTK 主题变量，深色/浅色主题自动成立
+ *   2. 不硬编码背景色（唯一例外是 flash 动画的高亮）
+ *   3. 语义化类名，不依赖具体控件树位置
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 状态药丸 ─────────────────────────────────────────────────────────────
+ * 用法：label.get_style_context().add_class("pill")
+ *                                        .add_class("pill-success")
+ * 单独提供 add_class("pill") 的裸版本用于中性状态。
+ */
+
+.pill {
+    border-radius: 10px;
+    padding: 2px 9px;
+    font-size: 88%;
+    font-weight: bold;
+    background-image: none;
+    border: 1px solid transparent;
+    min-height: 18px;
+}
+
+/* 绿 —— 已创建、健康 */
+.pill-success {
+    background-color: alpha(@success_color, 0.18);
+    border-color: alpha(@success_color, 0.45);
+    color: shade(@success_color, 0.85);
+}
+
+/* 琥珀 —— 新发现、可优化 */
+.pill-warning {
+    background-color: alpha(@warning_color, 0.20);
+    border-color: alpha(@warning_color, 0.50);
+    color: shade(@warning_color, 0.80);
+}
+
+/* 红 —— 失效、损坏 */
+.pill-danger {
+    background-color: alpha(@error_color, 0.18);
+    border-color: alpha(@error_color, 0.45);
+    color: shade(@error_color, 0.90);
+}
+
+/* 蓝 —— 外部创建 */
+.pill-info {
+    background-color: alpha(@accent_bg_color, 0.18);
+    border-color: alpha(@accent_bg_color, 0.45);
+    color: @accent_bg_color;
+}
+
+/* 灰 —— 未知 / 忽略 */
+.pill-muted {
+    background-color: alpha(@insensitive_fg_color, 0.14);
+    border-color: alpha(@insensitive_fg_color, 0.35);
+    color: @insensitive_fg_color;
+}
+
+/* 空心 —— 新发现（未创建）*/
+.pill-hollow {
+    background-color: transparent;
+    border-color: alpha(@warning_color, 0.75);
+    color: shade(@warning_color, 0.80);
+}
+
+/* 药丸里的小圆点 */
+.pill-dot {
+    min-width: 7px;
+    min-height: 7px;
+    border-radius: 4px;
+    background-color: currentColor;
+    margin-right: 5px;
+}
+
+/* ── 目录 chip ──────────────────────────────────────────────────────────── */
+
+.dir-chip {
+    background-image: none;
+    background-color: alpha(@theme_bg_color, 0.55);
+    border: 1px solid alpha(@borders, 0.80);
+    border-radius: 13px;
+    padding: 2px 4px 2px 9px;
+    min-height: 24px;
+    transition: background-color 150ms ease-out, border-color 150ms ease-out;
+}
+
+.dir-chip:hover {
+    background-color: alpha(@accent_bg_color, 0.14);
+    border-color: alpha(@accent_bg_color, 0.55);
+}
+
+/* 目录不存在 */
+.dir-chip.missing {
+    border-color: alpha(@error_color, 0.80);
+    background-color: alpha(@error_color, 0.10);
+}
+
+.dir-chip.missing label {
+    color: shade(@error_color, 0.92);
+}
+
+/* chip 上的移除按钮 */
+.dir-chip button {
+    padding: 0;
+    min-width: 18px;
+    min-height: 18px;
+    border-radius: 9px;
+    background: none;
+    border: none;
+    opacity: 0.55;
+}
+
+.dir-chip button:hover {
+    opacity: 1.0;
+    background-color: alpha(@error_color, 0.22);
+}
+
+/* ── 浮动操作条 ─────────────────────────────────────────────────────────── */
+
+.action-overlay {
+    background-image: none;
+    background-color: alpha(@theme_bg_color, 0.94);
+    border: 1px solid alpha(@borders, 0.85);
+    border-radius: 10px;
+    padding: 4px 6px;
+    box-shadow: 0 3px 10px alpha(black, 0.28);
+}
+
+.action-overlay button {
+    padding: 4px 10px;
+    border-radius: 6px;
+}
+
+/* ── 顶栏 ───────────────────────────────────────────────────────────────── */
+
+.app-header {
+    padding: 6px 10px;
+    border-bottom: 1px solid alpha(@borders, 0.50);
+}
+
+.app-subtitle {
+    font-size: 88%;
+    color: @insensitive_fg_color;
+}
+
+.app-title {
+    font-weight: bold;
+    font-size: 108%;
+}
+
+.filter-bar {
+    padding: 5px 10px;
+    border-bottom: 1px solid alpha(@borders, 0.35);
+}
+
+/* ── 主列表 ─────────────────────────────────────────────────────────────── */
+
+treeview.view.app-list {
+    border-bottom: none;
+}
+
+treeview.view.app-list:selected,
+treeview.view.app-list:selected:focus {
+    background-color: alpha(@accent_bg_color, 0.20);
+}
+
+/* 问题行 */
+.app-row-broken {
+    background-color: alpha(@error_color, 0.06);
+}
+
+.app-row-broken:selected {
+    background-color: alpha(@error_color, 0.20);
+}
+
+.app-row-missing {
+    background-color: alpha(@insensitive_fg_color, 0.06);
+    color: @insensitive_fg_color;
+}
+
+.app-row-problem {
+    background-color: alpha(@warning_color, 0.06);
+}
+
+/* 路径列弱化显示 */
+.cell-dim {
+    color: @insensitive_fg_color;
+    font-size: 92%;
+}
+
+.cell-mono {
+    font-family: Monospace;
+    font-size: 92%;
+}
+
+.cell-size {
+    font-feature-settings: "tnum";
+}
+
+/* 刚被操作过的行：底色一闪后淡出（由代码移除类） */
+@keyframes row-flash {
+    0%   { background-color: alpha(@accent_bg_color, 0.42); }
+    100% { background-color: alpha(@accent_bg_color, 0.00); }
+}
+
+.app-row-flash {
+    animation: row-flash 900ms ease-out 1;
+}
+
+/* ── .desktop 内容预览 / 差异 ───────────────────────────────────────────── */
+
+.desktop-preview {
+    font-family: Monospace;
+    font-size: 92%;
+    background-color: alpha(@theme_bg_color, 0.55);
+    border: 1px solid alpha(@borders, 0.60);
+    border-radius: 6px;
+    padding: 8px;
+}
+
+.diff-add {
+    color: shade(@success_color, 0.80);
+    background-color: alpha(@success_color, 0.12);
+}
+
+.diff-del {
+    color: shade(@error_color, 0.90);
+    background-color: alpha(@error_color, 0.12);
+}
+
+.diff-ctx {
+    color: @insensitive_fg_color;
+}
+
+/* ── 问题列表（修复对话框） ─────────────────────────────────────────────── */
+
+.problem-row {
+    padding: 6px 8px;
+    border-radius: 6px;
+    background-color: alpha(@theme_bg_color, 0.45);
+    border: 1px solid alpha(@borders, 0.40);
+}
+
+.problem-row.sev-fatal {
+    border-left: 3px solid @error_color;
+}
+
+.problem-row.sev-serious {
+    border-left: 3px solid shade(@error_color, 0.85);
+}
+
+.problem-row.sev-warning {
+    border-left: 3px solid @warning_color;
+}
+
+.problem-row.sev-notice {
+    border-left: 3px solid @insensitive_fg_color;
+}
+
+.problem-current {
+    font-family: Monospace;
+    font-size: 90%;
+    color: @insensitive_fg_color;
+}
+
+.problem-fixed {
+    font-family: Monospace;
+    font-size: 90%;
+    color: shade(@success_color, 0.82);
+}
+
+/* 保留 / 丢弃分区 */
+.keep-section {
+    padding: 8px;
+    border-radius: 6px;
+    background-color: alpha(@success_color, 0.07);
+    border: 1px solid alpha(@success_color, 0.28);
+}
+
+.drop-section {
+    padding: 8px;
+    border-radius: 6px;
+    background-color: alpha(@error_color, 0.07);
+    border: 1px solid alpha(@error_color, 0.28);
+}
+
+/* ── 向导 ───────────────────────────────────────────────────────────────── */
+
+.wizard-step-active {
+    color: @accent_bg_color;
+    font-weight: bold;
+}
+
+.wizard-step-idle {
+    color: @insensitive_fg_color;
+}
+
+.wizard-hero {
+    font-size: 160%;
+    font-weight: bold;
+    margin-bottom: 6px;
+}
+
+.wizard-hint {
+    color: @insensitive_fg_color;
+    font-size: 92%;
+}
+
+/* 设置页里成组的选项卡片 */
+.option-card {
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid alpha(@borders, 0.55);
+    background-color: alpha(@theme_bg_color, 0.40);
+}
+
+.option-card:selected {
+    border-color: @accent_bg_color;
+    background-color: alpha(@accent_bg_color, 0.10);
+}
+
+/* ── InfoBar ────────────────────────────────────────────────────────────── */
+
+infobar.warning label,
+infobar.warning button {
+    color: inherit;
+}
+
+/* ── 详情面板 ───────────────────────────────────────────────────────────── */
+
+.detail-panel {
+    background-color: alpha(@theme_bg_color, 0.60);
+    border-left: 1px solid alpha(@borders, 0.55);
+    padding: 10px;
+}
+
+.detail-key {
+    color: @insensitive_fg_color;
+    font-size: 90%;
+}
+
+.detail-value {
+    font-family: Monospace;
+    font-size: 90%;
+}
+
+/* ── 进度对话框 ─────────────────────────────────────────────────────────── */
+
+progressbar trough {
+    min-height: 8px;
+    border-radius: 4px;
+}
+
+progressbar progress {
+    border-radius: 4px;
+}
+
+.log-view {
+    font-family: Monospace;
+    font-size: 90%;
+}
+
+.log-ok {
+    color: shade(@success_color, 0.82);
+}
+
+.log-fail {
+    color: shade(@error_color, 0.92);
+}
+
+.log-info {
+    color: @insensitive_fg_color;
+}
+
+/* ── 历史列表 ───────────────────────────────────────────────────────────── */
+
+.history-time {
+    font-family: Monospace;
+    font-size: 90%;
+    color: @insensitive_fg_color;
+}
+
+.history-undone {
+    text-decoration: line-through;
+    color: @insensitive_fg_color;
+}
+
+/* ── 通用辅助 ───────────────────────────────────────────────────────────── */
+
+.section-title {
+    font-weight: bold;
+    margin-top: 4px;
+    margin-bottom: 2px;
+}
+
+.hint-box {
+    padding: 8px 10px;
+    border-radius: 6px;
+    background-color: alpha(@warning_color, 0.10);
+    border: 1px solid alpha(@warning_color, 0.35);
+}
+
+.mono-small {
+    font-family: Monospace;
+    font-size: 88%;
+    color: @insensitive_fg_color;
+}
+
+/* 分段控件（修复模式三选一） */
+.mode-radio {
+    padding: 6px 10px;
+}
+
+.mode-radio:checked {
+    color: @accent_bg_color;
+    font-weight: bold;
+}
+
+/* 分隔用的细线 */
+.thin-sep {
+    background-color: alpha(@borders, 0.45);
+    min-height: 1px;
+}
