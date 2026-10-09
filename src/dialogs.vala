@@ -775,6 +775,11 @@ namespace Dialogs {
             Gtk.TextIter end;
             buf.get_end_iter (out end);
             if (color != null) {
+                // color 是 CSS 颜色值，不是标签名 ——
+                // 首次使用时按颜色建一个同名标签，之后复用。
+                var table = buf.get_tag_table ();
+                if (table.lookup (color) == null)
+                    buf.create_tag (color, "foreground", color, null);
                 buf.insert_with_tags_by_name (ref end, text + "\n", -1, color);
             } else {
                 buf.insert (ref end, text + "\n", -1);

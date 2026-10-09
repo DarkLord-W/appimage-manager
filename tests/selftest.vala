@@ -362,6 +362,121 @@ public int main (string[] args) {
                hist.length > 0, "历史为空");
     }
 
+    /* ══ 10. 端到端：修复启动器 ══════════════════════════════════
+     * 验证「勾选 = 用户明确要修」的语义：即使处在保守模式，
+     * 勾了「缺失字段」类问题也应该真的写进文件。
+     * ══════════════════════════════════════════════════════════════ */
+    stdout.printf ("\n── 10. 修复启动器（端到端）───────────────\n");
+
+    if (sandboxed) {
+        string tricky2 = GLib.Path.build_filename (apps_dir, "Krita-5.2.0-x86_64.AppImage");
+        var app2 = new AppEntry (tricky2);
+        app2.meta_name = "Krita";
+        app2.categories = "Graphics;";
+        app2.comment = "digital painting";
+        app2.startup_wm_class = "krita";
+        app2.generic_name = "Paint Tool";
+
+        var store2 = new Store (new AppConfig ());
+        var cfg2 = new AppConfig ();
+        var cr = Repair.create_launchers ({ app2 }, cfg2, store2);
+        check (ref checks, ref failures, "为修复测试准备好了启动器",
+               cr.created == 1 || cr.skipped == 1,
+               "created=%d skipped=%d".printf (cr.created, cr.skipped));
+
+        // 重新扫一遍，拿到刚创建的条目
+        var found = DesktopFiles.scan_directory (apps_out);
+        DesktopFiles.Entry? target = null;
+        foreach (var d in found)
+            if (d.exec_target == AppPath.canonical (tricky2))
+                target = d;
+
+        if (target != null) {
+            var rs2 = RuleSet.check (target, app2);
+            check (ref checks, ref failures, "新建的条目有可优化项",
+                   rs2.problems.length > 0,
+                   "问题数 %d".printf (rs2.problems.length));
+
+            // 夹具没有真图标也能提取，所以图标类问题应被标为「不可自动修」，
+            // 而不是让用户勾了却什么都不发生。
+            check (ref checks, ref failures,
+                   "无可用图标时 I001 被标记为不可自动修",
+                   !has_applyable (rs2, "I001"),
+                   "I001 仍显示为可修，勾了会无效");
+
+            // 人工注入两个「一定能修」的问题，覆盖真正的修复路径
+            string raw = "";
+            GLib.FileUtils.get_contents (target.file_path, out raw);
+            raw = raw.replace ("Version=1.5", "Version=2.0");
+            raw = raw.replace ("Terminal=false", "Terminal=true");
+            raw += "Hidden=true\n";
+            string? werr0;
+            DesktopFiles.write_atomic (target.file_path, raw, out werr0);
+
+            var broken = DesktopFiles.parse (target.file_path);
+            var rs2b = RuleSet.check (broken, app2);
+            check (ref checks, ref failures,
+                   "注入后确实检出可修问题",
+                   has_problem (rs2b, "E001") && has_problem (rs2b, "I005"),
+                   "问题: %s".printf (problem_ids (rs2b)));
+
+            // 模拟用户在对话框里全勾选，模式保持「保守」
+            var plan = new RepairPlan (app2, broken);
+            plan.problems = rs2b.problems;
+            plan.selected = new bool[rs2b.problems.length];
+            for (int i = 0; i < plan.selected.length; i++)
+                plan.selected[i] = rs2b.problems[i].applyable;
+            plan.mode = FixMode.CONSERVATIVE;
+
+            string proposed = Repair.build_repaired (plan);
+
+            stdout.printf ("      命中规则: %s\n", join_strs (plan.rules_fired));
+
+            check (ref checks, ref failures,
+                   "保守模式 + 勾选 → 真的改了文件",
+                   has_str2 (plan.rules_fired, "E001")
+                   && has_str2 (plan.rules_fired, "I005"),
+                   "命中: %s".printf (join_strs (plan.rules_fired)));
+
+            // 落盘并复检
+            string? werr;
+            DesktopFiles.write_atomic (target.file_path, proposed, out werr);
+            check (ref checks, ref failures, "修复后的内容写入成功",
+                   werr == null, werr ?? "");
+
+            string after = "";
+            GLib.FileUtils.get_contents (target.file_path, out after);
+            check (ref checks, ref failures,
+                   "Version= 被钳回 1.5",
+                   after.contains ("Version=1.5"), "");
+            check (ref checks, ref failures,
+                   "Terminal= 改为 false",
+                   after.contains ("Terminal=false") && !after.contains ("Terminal=true"), "");
+
+            string verr2 = DesktopFiles.validate_content (after);
+            check (ref checks, ref failures,
+                   "修复后的文件通过 desktop-file-validate",
+                   verr2 == "", verr2);
+
+            // 再体检一次：这两个问题应该消失
+            var reparsed = DesktopFiles.parse (target.file_path);
+            if (reparsed != null) {
+                var rs3 = RuleSet.check (reparsed, app2);
+                check (ref checks, ref failures,
+                       "修复后 E001 / I005 都不再报",
+                       !has_problem (rs3, "E001") && !has_problem (rs3, "I005"),
+                       "仍报: %s".printf (problem_ids (rs3)));
+                check (ref checks, ref failures,
+                       "修复后问题总数下降",
+                       rs3.problems.length < rs2b.problems.length,
+                       "修复前 %d → 修复后 %d".printf (
+                           rs2b.problems.length, rs3.problems.length));
+            }
+        } else {
+            check (ref checks, ref failures, "找到刚创建的 Krita 条目", false, "");
+        }
+    }
+
     /* ══ 汇总 ════════════════════════════════════════════════════ */
     stdout.printf ("\n═══════════════════════════════════════════\n");
     if (failures == 0) {
@@ -448,6 +563,41 @@ void check_pill (ref int checks, ref int failures,
         if (r == (int) eb && b == (int) er)
             stdout.printf ("      → 红蓝通道互换（Cairo/GdkPixbuf 字节序搞反了）\n");
     }
+}
+
+/** 该问题是否存在且被标记为可自动修 */
+bool has_applyable (RuleSet.Result rs, string id) {
+    foreach (var p in rs.problems)
+        if (p.id == id && p.applyable)
+            return true;
+    return false;
+}
+
+string problem_ids (RuleSet.Result rs) {
+    var a = new GenericArray<string> ();
+    foreach (var p in rs.problems)
+        a.add (p.id);
+    return join (a);
+}
+
+bool has_str2 (string[] a, string want) {
+    foreach (string x in a)
+        if (x == want)
+            return true;
+    return false;
+}
+
+bool has_problem (RuleSet.Result rs, string id) {
+    foreach (var p in rs.problems)
+        if (p.id == id)
+            return true;
+    return false;
+}
+
+string join_strs (string[] a) {
+    if (a.length == 0)
+        return "（无）";
+    return string.joinv (", ", a);
 }
 
 string join (GenericArray<string> a) {

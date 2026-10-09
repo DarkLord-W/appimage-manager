@@ -312,15 +312,30 @@ namespace RuleSet {
 
         /* ── 🟡 警告 ─────────────────────────────────────────── */
 
+        // 图标类问题只有在「手上已经有提取好的图标」时才可自动修 ——
+        // 否则勾了也写不进去，按钮上的数字会与实际行为对不上。
+        bool have_icon = (app.icon_path != null && app.icon_path != ""
+                          && AppPath.exists (app.icon_path));
+
         if (e.icon == "") {
             var p = new Problem ("I001", Severity.WARNING, "Icon= 缺失");
             p.current = "（缺失）";
-            p.fixed = "从 AppImage 提取 → 缓存至 %s".printf (AppPath.shorten (AppPath.cache_dir ()));
+            if (have_icon) {
+                p.fixed = "用已提取的图标 → %s".printf (AppPath.shorten (app.icon_path));
+            } else {
+                p.fixed = "需先提取图标：先关闭本窗口，点工具栏的「🖼 图标」";
+                p.applyable = false;
+            }
             probs.add (p);
         } else if (e.icon.has_prefix ("/") && !AppPath.exists (e.icon)) {
             var p = new Problem ("I001", Severity.WARNING, "Icon 指向的文件不存在");
             p.current = "Icon=%s  ✗".printf (e.icon);
-            p.fixed = "从 AppImage 提取并缓存";
+            if (have_icon) {
+                p.fixed = "改用已提取的图标 → %s".printf (AppPath.shorten (app.icon_path));
+            } else {
+                p.fixed = "需先提取图标：先关闭本窗口，点工具栏的「🖼 图标」";
+                p.applyable = false;
+            }
             probs.add (p);
         }
 
@@ -343,7 +358,12 @@ namespace RuleSet {
         if (e.comment == "") {
             var p = new Problem ("I004", Severity.WARNING, "缺少 Comment=");
             p.current = "（缺失）";
-            p.fixed = app.comment != "" ? app.comment : "由 AppImage 提取";
+            if (app.comment != "") {
+                p.fixed = app.comment;
+            } else {
+                p.fixed = "AppImage 未提供描述，需手工填写";
+                p.applyable = false;
+            }
             probs.add (p);
         }
 

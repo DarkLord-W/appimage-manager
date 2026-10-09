@@ -371,6 +371,16 @@ namespace DesktopFiles {
      */
     public static void write_atomic (string path, string content, out string? error) {
         error = null;
+
+        // 目标目录可能还不存在 —— 比如用户手工写了 config.ini 跳过首次运行
+        // 向导（那样就不会走到 ensure_core_dirs），或者 applications 目录被
+        // 手动删掉了。写之前自己确保父目录存在，不要依赖调用方的顺序。
+        string parent = GLib.Path.get_dirname (path);
+        if (!AppPath.ensure_dir (parent)) {
+            error = "无法创建目录: %s".printf (AppPath.shorten (parent));
+            return;
+        }
+
         string tmp = "%s.tmp%u".printf (path, (uint) (GLib.get_real_time () % 1000000));
         try {
             // 先落临时文件，再 rename —— 同分区上 rename 是原子操作
@@ -385,7 +395,7 @@ namespace DesktopFiles {
             error = "重命名失败: %s → %s".printf (AppPath.shorten (tmp), AppPath.shorten (path));
             return;
         }
-        sync_dir (GLib.Path.get_dirname (path));
+        sync_dir (parent);
     }
 
     /**

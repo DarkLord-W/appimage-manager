@@ -298,35 +298,43 @@ namespace Repair {
 
         /* ── 补全模式：只补缺失，不覆盖已有 ─────────────────── */
 
+        // 语义：勾选 = 用户明确要求修这一项，与模式无关 —— 否则勾了 3 个
+        // 「缺失字段」问题、点「修复 3 项」，在保守模式下却什么都没改，
+        // 按钮数字与实际行为对不上。
+        //
+        // 模式只决定「勾选项之外」还做什么：
+        //   保守 —— 只改勾选的
+        //   补全 —— 勾选的之外，再给所有缺失的标准字段补上默认值
+        //   重建 —— 整体重新生成
         bool enrich = plan.mode == FixMode.ENRICH
                    || plan.mode == FixMode.REBUILD;
 
-        if (enrich && fires ("I001")) {
+        if (fires ("I001") || (enrich && !doc.has (DE, "Icon"))) {
             string icon = plan.app.icon_path ?? "";
             if (icon != "") {
                 doc.set (DE, "Icon", icon);
                 fired.add ("I001");
             }
         }
-        if (enrich && fires ("I002") && !doc.has (DE, "Categories")) {
+        if ((fires ("I002") || enrich) && !doc.has (DE, "Categories")) {
             doc.set (DE, "Categories", plan.app.categories != ""
                 ? plan.app.categories : "Utility;");
             fired.add ("I002");
         }
-        if (enrich && fires ("I003") && !doc.has (DE, "StartupWMClass")) {
+        if ((fires ("I003") || enrich) && !doc.has (DE, "StartupWMClass")) {
             doc.set (DE, "StartupWMClass", plan.app.startup_wm_class != ""
                 ? plan.app.startup_wm_class : plan.app.get_best_name ());
             fired.add ("I003");
         }
-        if (enrich && fires ("I004") && !doc.has (DE, "Comment") && plan.app.comment != "") {
+        if (fires ("I004") || (enrich && !doc.has (DE, "Comment") && plan.app.comment != "")) {
             doc.set (DE, "Comment", plan.app.comment);
             fired.add ("I004");
         }
-        if (enrich && fires ("I010") && !doc.has (DE, "TryExec")) {
+        if ((fires ("I010") || enrich) && !doc.has (DE, "TryExec")) {
             doc.set (DE, "TryExec", plan.app.path);
             fired.add ("I010");
         }
-        if (enrich && fires ("C001") && !doc.has (DE, "GenericName")) {
+        if (fires ("C001") || (enrich && !doc.has (DE, "GenericName"))) {
             doc.set (DE, "GenericName", plan.app.generic_name != ""
                 ? plan.app.generic_name : plan.app.get_best_name ());
             fired.add ("C001");
@@ -608,6 +616,10 @@ namespace Repair {
         tx.txid = new_txid ();
         tx.operation = "create";
         tx.started_at = now_iso ();
+
+        // 目标目录先确保存在：用户可能手工写了 config.ini 跳过首次运行
+        // 向导，那样 ensure_core_dirs 就不会被调用。
+        AppPath.ensure_dir (AppPath.applications_dir ());
 
         // 先从磁盘建一张「哪些 AppImage 已经有启动器」的索引。
         //
