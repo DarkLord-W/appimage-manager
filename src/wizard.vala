@@ -83,6 +83,7 @@ namespace Wizard {
             get_content_area ().add (root);
             stack.set_visible_child_name (STACK_DIR);
             update_buttons ();
+            update_step_dots ();   // 必须在 stack 建好之后调用
             show_all ();
         }
 
@@ -105,7 +106,6 @@ namespace Wizard {
                     step_dots.pack_start (new Gtk.Label ("·"), false, false, 0);
             }
             box.pack_start (step_dots, false, false, 0);
-            update_step_dots ();
 
             return box;
         }
@@ -441,6 +441,8 @@ namespace Wizard {
 
         /** 高亮当前步骤，已走过的步骤维持普通色 */
         private void update_step_dots () {
+            if (stack == null)
+                return;   // 构造期间可能被提前调用
             string cur = stack.get_visible_child_name ();
             int active = 0;
             if (cur == STACK_ICON)      active = 1;
