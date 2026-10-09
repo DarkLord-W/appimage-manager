@@ -112,6 +112,51 @@ public class AppEntry : GLib.Object {
 
 public class Store : GLib.Object {
 
+    /* ── 过滤判定（纯函数，可独立测试）────────────────────────────
+     *
+     * 刻意放在这里而不是界面里：界面那段曾经往 4 字节的枚举里读
+     * 8 字节的对象指针，破坏栈，一选过滤器就崩。判定逻辑与取值
+     * 分离之后，界面只剩「取 AppEntry → 调这个」，没有类型转换的
+     * 空间，而且全部路径都能被自测覆盖。
+     */
+
+    /** filter_mode: 0=全部 1=新发现 2=已创建 3=外部 4=失效 5=可优化 */
+    public static bool matches_filter (AppEntry e, int filter_mode,
+                                       string query = "") {
+        if (e == null)
+            return false;
+
+        // 状态过滤
+        switch (filter_mode) {
+            case 0: break;   // 全部
+            case 1:
+                if (e.match != MatchState.NEW) return false; break;
+            case 2:
+                if (e.match != MatchState.REGISTERED) return false; break;
+            case 3:
+                if (e.match != MatchState.EXTERNAL) return false; break;
+            case 4:
+                if (e.match != MatchState.BROKEN) return false; break;
+            case 5:
+                if (e.health != HealthState.IMPROVABLE
+                 && e.health != HealthState.CORRUPT) return false;
+                break;
+            default:
+                break;   // 未知模式当「全部」，宁可多显示不可全空
+        }
+
+        // 搜索：名称 / 文件名 / 完整路径，大小写不敏感
+        string q = query.strip ().down ();
+        if (q != "") {
+            if (!e.get_best_name ().down ().contains (q)
+                && !e.basename.down ().contains (q)
+                && !e.path.down ().contains (q))
+                return false;
+        }
+
+        return true;
+    }
+
     public GLib.List<AppEntry> entries;
     public AppConfig config;
 

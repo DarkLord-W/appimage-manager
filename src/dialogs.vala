@@ -252,10 +252,38 @@ namespace Dialogs {
         f_icon.set_editable (false);
         f_icon.set_placeholder_text ("（未设置，使用系统通用图标）");
 
-        var cat_combo = new Gtk.ComboBoxText.with_entry ();
-        foreach (string c in Prefill.category_choices ())
-            cat_combo.append_text (c);
-        ((Gtk.Entry) cat_combo.get_child ()).set_text (decision.fields.categories);
+        /* 分类：普通 Entry + 建议菜单按钮。
+         * 不用 ComboBoxText.with_entry ()：它没有公开 API 能拿到内部 Entry，
+         * get_child () 赌的是未文档化的内部布局，转型失败拿到 NULL 再调
+         * text / set_text 就会崩。这里自己拿住 Entry，行为完全可控。 */
+        var cat_entry = new Gtk.Entry ();
+        cat_entry.set_text (decision.fields.categories);
+        cat_entry.set_hexpand (true);
+
+        var cat_menu = new Gtk.Menu ();
+        foreach (string c in Prefill.category_choices ()) {
+            // 每个菜单项绑定独立的局部拷贝：若共享循环变量，点哪一项都会写入最后一项的值
+            string choice = c;
+            var mi = new Gtk.MenuItem.with_label (choice);
+            mi.activate.connect (() => { cat_entry.set_text (choice); });
+            cat_menu.append (mi);
+        }
+        cat_menu.show_all ();
+
+        var cat_btn = new Gtk.MenuButton ();
+        cat_btn.set_popup (cat_menu);
+        cat_btn.set_tooltip_text ("从常见分类里挑一个");
+        cat_btn.set_relief (Gtk.ReliefStyle.NONE);
+        // 个别图标主题没有 pan-down-symbolic，退化成文字箭头，保证按钮不会空白
+        if (Gtk.IconTheme.get_default ().has_icon ("pan-down-symbolic"))
+            cat_btn.set_image (new Gtk.Image.from_icon_name ("pan-down-symbolic",
+                                                             Gtk.IconSize.BUTTON));
+        else
+            cat_btn.set_label ("▾");
+
+        var cat_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 0);
+        cat_box.pack_start (cat_entry, true, true, 0);
+        cat_box.pack_start (cat_btn, false, false, 0);
 
         var f_comment = new Gtk.Entry ();
         f_comment.set_placeholder_text ("一句话描述，可留空");
@@ -271,7 +299,7 @@ namespace Dialogs {
         grid.attach (mk_label ("图标"), 0, row, 1, 1);
         grid.attach (f_icon, 1, row++, 1, 1);
         grid.attach (mk_label ("分类"), 0, row, 1, 1);
-        grid.attach (cat_combo, 1, row++, 1, 1);
+        grid.attach (cat_box, 1, row++, 1, 1);
         grid.attach (mk_label ("备注"), 0, row, 1, 1);
         grid.attach (f_comment, 1, row++, 1, 1);
         grid.attach (mk_label ("窗口类"), 0, row, 1, 1);
@@ -327,7 +355,7 @@ namespace Dialogs {
             decision.fields.name = f_name.text.strip ();
             decision.fields.exec_line = f_exec.text.strip ();
             decision.fields.icon = current_icon;
-            decision.fields.categories = ((Gtk.Entry) cat_combo.get_child ()).text.strip ();
+            decision.fields.categories = cat_entry.text.strip ();
             decision.fields.comment = f_comment.text.strip ();
             decision.fields.startup_wm_class = f_wm.text.strip ();
             decision.fields.terminal = f_term.active;
@@ -371,12 +399,18 @@ namespace Dialogs {
 
         icon_clear.clicked.connect (() => set_icon (""));
 
-        f_name.changed.connect (refresh_preview);
-        f_exec.changed.connect (refresh_preview);
-        f_comment.changed.connect (refresh_preview);
-        f_wm.changed.connect (refresh_preview);
-        f_term.toggled.connect (refresh_preview);
-        ((Gtk.Entry) cat_combo.get_child ()).changed.connect (refresh_preview);
+        // 注意：必须用 lambda 包一层，不能把局部函数直接接到信号上。
+        //
+        // Vala 在「局部函数 → 信号」时会把委托拷贝一份，但捕获的变量
+        // （decision / prev_view / current_icon 这些）不会跟着被正确持有，
+        // 信号触发时闭包数据已悬空 → 段错误。实测在任一字段里打一个字
+        // 就崩，而不接信号的直接调用却完全正常 —— 就是这个原因。
+        f_name.changed.connect (() => { refresh_preview (); });
+        f_exec.changed.connect (() => { refresh_preview (); });
+        f_comment.changed.connect (() => { refresh_preview (); });
+        f_wm.changed.connect (() => { refresh_preview (); });
+        f_term.toggled.connect (() => { refresh_preview (); });
+        cat_entry.changed.connect (() => { refresh_preview (); });
 
         /* ── 提取（后台线程 + 可取消）─────────────────────────── */
 
@@ -429,7 +463,7 @@ namespace Dialogs {
                     if (m_comment != "")
                         f_comment.set_text (m_comment);
                     if (m_cats != "")
-                        ((Gtk.Entry) cat_combo.get_child ()).set_text (m_cats);
+                        cat_entry.set_text (m_cats);
                     if (m_wm != "")
                         f_wm.set_text (m_wm);
                     if (m_icon != null)

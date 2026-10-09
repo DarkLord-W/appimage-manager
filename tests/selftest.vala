@@ -530,6 +530,93 @@ public int main (string[] args) {
 
     loop.quit ();
 
+    /* ══ 12. 过滤判定（纯函数）══════════════════════════════════
+     *
+     * 回归测试：界面上的过滤器曾经一选就崩 —— on_row_visible 里
+     * 往 4 字节的枚举读 8 字节的对象指针，破坏栈。现在判定逻辑是
+     * 纯函数，这里把 6 种模式 × 各种状态的组合全测一遍。
+     * ══════════════════════════════════════════════════════════════ */
+    stdout.printf ("\n── 12. 过滤判定 ──────────────────────────\n");
+
+    // 造几个不同状态的条目
+    AppEntry mk (string name, MatchState ms, HealthState hs) {
+        var a = new AppEntry ("/tmp/filter-test/%s.AppImage".printf (name));
+        a.meta_name = name;
+        a.display_name = name;
+        a.match = ms;
+        a.health = hs;
+        return a;
+    }
+
+    var e_new  = mk ("NewOne",  MatchState.NEW,        HealthState.UNKNOWN);
+    var e_reg  = mk ("RegOne",  MatchState.REGISTERED, HealthState.HEALTHY);
+    var e_ext  = mk ("ExtOne",  MatchState.EXTERNAL,   HealthState.IMPROVABLE);
+    var e_bad  = mk ("BadOne",  MatchState.BROKEN,     HealthState.UNKNOWN);
+    var e_cor  = mk ("CorOne",  MatchState.REGISTERED, HealthState.CORRUPT);
+
+    // ── 模式 0：全部，谁都应该通过 ──
+    check (ref checks, ref failures, "过滤 全部 → 新发现通过",
+           Store.matches_filter (e_new, 0, ""), "");
+    check (ref checks, ref failures, "过滤 全部 → 失效也通过",
+           Store.matches_filter (e_bad, 0, ""), "");
+
+    // ── 模式 1：新发现 ──
+    check (ref checks, ref failures, "过滤 新发现 → 只放行 NEW",
+           Store.matches_filter (e_new, 1, "")
+           && !Store.matches_filter (e_reg, 1, "")
+           && !Store.matches_filter (e_ext, 1, "")
+           && !Store.matches_filter (e_bad, 1, ""), "");
+
+    // ── 模式 2：已创建 ──
+    check (ref checks, ref failures, "过滤 已创建 → 只放行 REGISTERED",
+           Store.matches_filter (e_reg, 2, "")
+           && !Store.matches_filter (e_new, 2, "")
+           && !Store.matches_filter (e_ext, 2, ""), "");
+
+    // ── 模式 3：外部 ──
+    check (ref checks, ref failures, "过滤 外部 → 只放行 EXTERNAL",
+           Store.matches_filter (e_ext, 3, "")
+           && !Store.matches_filter (e_reg, 3, ""), "");
+
+    // ── 模式 4：失效 ──
+    check (ref checks, ref failures, "过滤 失效 → 只放行 BROKEN",
+           Store.matches_filter (e_bad, 4, "")
+           && !Store.matches_filter (e_new, 4, ""), "");
+
+    // ── 模式 5：可优化（健康度，不是匹配状态）──
+    check (ref checks, ref failures, "过滤 可优化 → IMPROVABLE 通过",
+           Store.matches_filter (e_ext, 5, ""), "");
+    check (ref checks, ref failures, "过滤 可优化 → CORRUPT 通过",
+           Store.matches_filter (e_cor, 5, ""), "");
+    check (ref checks, ref failures, "过滤 可优化 → HEALTHY 不通过",
+           !Store.matches_filter (e_reg, 5, ""), "");
+    check (ref checks, ref failures, "过滤 可优化 → UNKNOWN 不通过",
+           !Store.matches_filter (e_new, 5, ""), "");
+
+    // ── 未知模式当「全部」──
+    check (ref checks, ref failures, "未知过滤模式当全部处理（不误伤）",
+           Store.matches_filter (e_new, 99, ""), "");
+
+    // ── 搜索 ──
+    check (ref checks, ref failures, "搜索：匹配显示名（大小写不敏感）",
+           Store.matches_filter (e_new, 0, "newone"), "");
+    check (ref checks, ref failures, "搜索：匹配路径片段",
+           Store.matches_filter (e_new, 0, "filter-test"), "");
+    check (ref checks, ref failures, "搜索：不匹配的应被滤掉",
+           !Store.matches_filter (e_new, 0, "zzzznope"), "");
+    check (ref checks, ref failures, "搜索：首尾空格被忽略",
+           Store.matches_filter (e_new, 0, "   NewOne   "), "");
+
+    // ── 组合：模式 + 搜索 ──
+    check (ref checks, ref failures, "组合：模式命中但搜索不命中 → 滤掉",
+           !Store.matches_filter (e_new, 1, "RegOne"), "");
+    check (ref checks, ref failures, "组合：模式与搜索都命中 → 通过",
+           Store.matches_filter (e_new, 1, "NewOne"), "");
+
+    // ── 空引用不该崩 ──
+    check (ref checks, ref failures, "传入 null 不崩、返回 false",
+           !Store.matches_filter (null, 1, "x"), "");
+
     /* ══ 汇总 ════════════════════════════════════════════════════ */
     stdout.printf ("\n═══════════════════════════════════════════\n");
     if (failures == 0) {

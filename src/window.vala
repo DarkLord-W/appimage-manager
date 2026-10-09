@@ -951,45 +951,21 @@ public class MainWindow : Gtk.ApplicationWindow {
     //  过滤与选择
     // ══════════════════════════════════════════════════════════════
 
+    /**
+     * TreeModelFilter 的可见性判定。
+     *
+     * 这里只做一件事：把 AppEntry 取出来，交给 Store.matches_filter 判。
+     * 判定逻辑全部在纯函数里 —— 一是可被自测覆盖，二是避免在这里做
+     * 任何列类型转换（曾经因为往 4 字节的枚举里读 8 字节的对象指针
+     * 而破坏栈、一选过滤器就崩）。
+     */
     private bool on_row_visible (Gtk.TreeModel m, Gtk.TreeIter it) {
-        // 状态过滤
-        if (filter_mode != 0) {
-            MatchState ms;
-            HealthState hs;
-            ((Gtk.ListStore) m).get (it, Col.ENTRY, out ms, Col.ENTRY, out hs);
-            // 上面这行拿不到枚举，改用下面的写法
-        }
-
         AppEntry? e = null;
         m.get (it, Col.ENTRY, out e);
         if (e == null)
             return false;
 
-        // 状态过滤
-        if (filter_mode != 0) {
-            bool ok = false;
-            switch (filter_mode) {
-                case 1: ok = (e.match == MatchState.NEW); break;
-                case 2: ok = (e.match == MatchState.REGISTERED); break;
-                case 3: ok = (e.match == MatchState.EXTERNAL); break;
-                case 4: ok = (e.match == MatchState.BROKEN); break;
-                case 5: ok = (e.health == HealthState.IMPROVABLE
-                           || e.health == HealthState.CORRUPT); break;
-            }
-            if (!ok)
-                return false;
-        }
-
-        // 搜索
-        string q = search.get_text ().strip ().down ();
-        if (q != "") {
-            if (!e.get_best_name ().down ().contains (q)
-                && !e.basename.down ().contains (q)
-                && !e.path.down ().contains (q))
-                return false;
-        }
-
-        return true;
+        return Store.matches_filter (e, filter_mode, search.get_text ());
     }
 
     private void set_all_checked (bool on) {
