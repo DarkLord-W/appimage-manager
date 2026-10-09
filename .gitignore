@@ -15,4 +15,5 @@ src/*.d
 
 # 系统
 .DS_Store
-Thumbs.db.vala-stamp
+Thumbs.db
+
