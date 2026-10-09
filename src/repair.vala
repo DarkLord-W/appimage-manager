@@ -609,13 +609,29 @@ namespace Repair {
         tx.operation = "create";
         tx.started_at = now_iso ();
 
+        // 先从磁盘建一张「哪些 AppImage 已经有启动器」的索引。
+        //
+        // 不能只信 app.entry —— 那是 Store 扫描时的快照，可能过期；
+        // 而且手工构造的 AppEntry（比如批量导入）根本没有 entry。
+        // 以磁盘为准才能保证幂等。
+        var existing = new GLib.HashTable<string, string> (GLib.str_hash, GLib.str_equal);
+        foreach (var d in DesktopFiles.scan_directory (AppPath.applications_dir ())) {
+            if (d.marker_path != "" && !existing.contains (d.marker_path))
+                existing.insert (d.marker_path, d.file_path);
+            if (d.exec_target != null && d.exec_target != ""
+                && !existing.contains (d.exec_target))
+                existing.insert (d.exec_target, d.file_path);
+        }
+
         var items = new GenericArray<Journal.Item> ();
         int idx = 0;
 
         foreach (var app in apps) {
-            // 已经有条目就跳过
-            if (app.entry != null) {
+            // 已经有条目就跳过（先看 Store 快照，再落回磁盘索引）
+            if (app.entry != null || existing.contains (app.path)) {
                 res.skipped++;
+                string nm = app.basename;
+                msgs.add ("%s —— 已存在启动器，跳过".printf (nm));
                 continue;
             }
 

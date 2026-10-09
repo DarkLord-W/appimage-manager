@@ -276,6 +276,92 @@ public int main (string[] args) {
     check (ref checks, ref failures, "无冲突时保持原名",
            uniq == "krita.desktop", uniq);
 
+    /* ══ 8. 状态药丸的通道顺序 ═══════════════════════════════════ */
+    stdout.printf ("\n── 8. 状态药丸渲染 ───────────────────────\n");
+
+    // 回归测试：Cairo 的 ARGB32 在小端机上是 BGRA 字节序，而 GdkPixbuf
+    // 期望 RGBA。若直接在 pixbuf 的缓冲上建 surface，红蓝通道会互换
+    // （琥珀色的「新发现」会渲染成青色）。这里逐通道校验。
+    check_pill (ref checks, ref failures, "新发现", 0, "#e5a00d");
+    check_pill (ref checks, ref failures, "已创建", 0, "#2ecc71");
+    check_pill (ref checks, ref failures, "失效",   0, "#e74c3c");
+    check_pill (ref checks, ref failures, "外部",   1, "#3498db");
+    check_pill (ref checks, ref failures, "损坏",   3, "#e74c3c");
+
+    /* ══ 9. 端到端：创建启动器 ═══════════════════════════════════
+     * 重要：本段会向 AppPath.applications_dir () 写文件。
+     * 运行时务必把 XDG_DATA_HOME 指向沙箱，别污染真实家目录。
+     * Makefile 的 selftest 目标已经这么做了。
+     * ══════════════════════════════════════════════════════════ */
+    stdout.printf ("\n── 9. 创建启动器（端到端）────────────────\n");
+
+    string apps_out = AppPath.applications_dir ();
+    bool sandboxed = apps_out.has_prefix (sandbox) || apps_out.contains ("appmgr-sandbox");
+    check (ref checks, ref failures, "写入目标在沙箱内（防止污染真实家目录）",
+           sandboxed, "实际: %s".printf (apps_out));
+
+    if (sandboxed) {
+        AppPath.ensure_dir (apps_out);
+
+        // 用带空格和 % 的文件名，顺便验证转义
+        string tricky = GLib.Path.build_filename (apps_dir, "100% Pure.AppImage");
+        var app = new AppEntry (tricky);
+        app.meta_name = "100% Pure";
+        app.categories = "Utility;";
+        app.comment = "a test app";
+
+        var store = new Store (new AppConfig ());
+        var cfg = new AppConfig ();
+
+        var cres = Repair.create_launchers ({ app }, cfg, store);
+        check (ref checks, ref failures, "创建返回成功 1 个",
+               cres.created == 1, "created=%d failed=%d  %s".printf (
+                   cres.created, cres.failed, string.joinv (" / ", cres.messages)));
+
+        // 找到生成的文件
+        string? made = null;
+        var entries2 = DesktopFiles.scan_directory (apps_out);
+        foreach (var e in entries2)
+            if (e.exec_target == AppPath.canonical (tricky))
+                made = e.file_path;
+
+        check (ref checks, ref failures, "落盘的 .desktop 能被反查匹配到",
+               made != null, "在 %s 中未找到指向该 AppImage 的条目".printf (apps_out));
+
+        if (made != null) {
+            string content;
+            GLib.FileUtils.get_contents (made, out content);
+
+            check (ref checks, ref failures,
+                   "生成的条目带 X-AppImage-Manager-Path 标记",
+                   content.contains (DesktopFiles.MARKER_PATH), "");
+            check (ref checks, ref failures,
+                   "Exec 已转义：字面 %% 写成 %%%%",
+                   content.contains ("100%% Pure"), "");
+            check (ref checks, ref failures,
+                   "包含 TryExec",
+                   content.contains ("TryExec="), "");
+            check (ref checks, ref failures,
+                   "包含 StartupNotify",
+                   content.contains ("StartupNotify=true"), "");
+
+            string verr = DesktopFiles.validate_content (content);
+            check (ref checks, ref failures,
+                   "desktop-file-validate 校验通过",
+                   verr == "", verr);
+
+            // 幂等性：再创建一次应被跳过
+            var res2 = Repair.create_launchers ({ app }, cfg, store);
+            check (ref checks, ref failures, "重复创建被跳过",
+                   res2.created == 0, "第二次仍创建了 %d 个".printf (res2.created));
+        }
+
+        // 事务历史应当有记录
+        var hist = Backup.list_history ();
+        check (ref checks, ref failures, "事务已写入历史",
+               hist.length > 0, "历史为空");
+    }
+
     /* ══ 汇总 ════════════════════════════════════════════════════ */
     stdout.printf ("\n═══════════════════════════════════════════\n");
     if (failures == 0) {
@@ -317,6 +403,51 @@ DesktopFiles.Entry? find_entry (DesktopFiles.Entry[] list, string basename) {
         if (e.basename == basename)
             return e;
     return null;
+}
+
+/**
+ * 渲染一个药丸，取左侧圆点的中心像素，比对 RGB。
+ * 圆点是不透明纯色，最适合用来验证通道顺序。
+ */
+void check_pill (ref int checks, ref int failures,
+                 string text, int sev, string expect_hex) {
+    string color = PillPainter.color_for (text, sev);
+    bool hollow = (text == "新发现");
+    var pb = PillPainter.render (text, color, hollow, 24);
+
+    // 圆点圆心：pad(8) + dot(7)/2 = 11.5，取 11；纵向居中
+    int px = 11, py = 12;
+    int nch = pb.get_n_channels ();
+    int rowstride = pb.get_rowstride ();
+    unowned uchar[] pix = pb.get_pixels ();
+    int off = py * rowstride + px * nch;
+
+    int r = pix[off];
+    int g = pix[off + 1];
+    int b = pix[off + 2];
+
+    uint er = 0, eg = 0, eb = 0;
+    string h = expect_hex.substring (1);
+    uint.try_parse (h.substring (0, 2), out er, null, 16);
+    uint.try_parse (h.substring (2, 2), out eg, null, 16);
+    uint.try_parse (h.substring (4, 2), out eb, null, 16);
+
+    // 抗锯齿会影响边缘，圆心应该是纯色，允许 ±6 的误差
+    bool ok = (Math.fabs (r - (int) er) <= 6)
+           && (Math.fabs (g - (int) eg) <= 6)
+           && (Math.fabs (b - (int) eb) <= 6);
+
+    checks++;
+    if (ok) {
+        stdout.printf ("  ✓ 药丸 %s 圆点颜色 #%02X%02X%02X\n", text, r, g, b);
+    } else {
+        failures++;
+        stdout.printf ("  ✗ 药丸 %s 圆点颜色错误\n", text);
+        stdout.printf ("      期望 #%02X%02X%02X，实际 #%02X%02X%02X\n",
+                       er, eg, eb, r, g, b);
+        if (r == (int) eb && b == (int) er)
+            stdout.printf ("      → 红蓝通道互换（Cairo/GdkPixbuf 字节序搞反了）\n");
+    }
 }
 
 string join (GenericArray<string> a) {

@@ -4,7 +4,7 @@ DATADIR     ?= $(PREFIX)/share
 DESTDIR     ?=
 
 VALAC       ?= valac
-PKGS        := gtk+-3.0 gdk-pixbuf-2.0 gio-2.0 json-glib-1.0
+PKGS        := gtk+-3.0 gdk-pixbuf-2.0 pangocairo gio-2.0 json-glib-1.0
 PKG_FLAGS   := $(addprefix --pkg ,$(PKGS))
 PKG_CFLAGS  := $(shell pkg-config --cflags $(PKGS))
 PKG_LIBS    := $(shell pkg-config --libs $(PKGS))
@@ -60,18 +60,20 @@ run: $(BIN)
 # 直接编译引擎的 .vala 源（排除 GUI 入口与对话框），
 # 这样引擎的正确性可以脱离界面单独验证。
 ENGINE_VALA := $(filter-out src/main.vala src/window.vala src/dialogs.vala \
-                               src/wizard.vala src/pill.vala,$(SOURCES))
+                               src/wizard.vala,$(SOURCES))
 SELFTEST_BIN := appimage-manager-selftest
 
 $(SELFTEST_BIN): tests/selftest.vala $(ENGINE_VALA)
-	$(VALAC) $(VALAFLAGS) -o $@ $^
+	$(VALAC) $(VALAFLAGS) -X -lm -o $@ $^
 
 selftest: $(SELFTEST_BIN)
 	@if [ ! -d /tmp/appmgr-fixtures/apps ]; then \
 	    echo "生成测试夹具…"; \
 	    tests/make-fixtures.sh; \
 	fi
-	./$(SELFTEST_BIN) /tmp/appmgr-fixtures
+	rm -rf /tmp/appmgr-sandbox && mkdir -p /tmp/appmgr-sandbox
+	XDG_DATA_HOME=/tmp/appmgr-sandbox XDG_CONFIG_HOME=/tmp/appmgr-sandbox/cfg \
+	    ./$(SELFTEST_BIN) /tmp/appmgr-fixtures
 
 test: selftest
 
