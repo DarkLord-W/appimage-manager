@@ -29,6 +29,21 @@ public class AppMgr : Gtk.Application {
             window = new MainWindow (this);
             window.show_all ();
             window.check_crash_recovery ();
+
+            // 首次运行（配置里 configured=false）走向导。
+            // 向导是模态的，跑完再决定要不要立即扫描。
+            if (!config.is_configured ()) {
+                var wiz = Wizard.show (window, config);
+                int r = wiz.run ();
+                wiz.destroy ();
+                if (r == Gtk.ResponseType.OK) {
+                    // 用户点了「立即扫描并开始」
+                    window.refresh ();
+                } else {
+                    // 用户点了「稍后再说」：配置已标记为已配置，只更新副标题
+                    window.rebuild_dir_chips_public ();
+                }
+            }
         }
         window.present ();
     }

@@ -205,6 +205,12 @@ public class MainWindow : Gtk.ApplicationWindow {
         rebuild_dir_chips ();
     }
 
+    /** 供 main.vala 在向导结束后刷新目录 chips */
+    public void rebuild_dir_chips_public () {
+        rebuild_dir_chips ();
+        update_subtitle ();
+    }
+
     private void rebuild_dir_chips () {
         dir_box.foreach ((w) => dir_box.remove (w));
 

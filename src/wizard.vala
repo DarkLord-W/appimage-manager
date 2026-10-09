@@ -38,6 +38,7 @@ namespace Wizard {
         private Gtk.Box dir_list;
         private Gtk.Box step_dots;
         private Gtk.Label done_label;
+        private Gtk.Label[] step_labels = new Gtk.Label[3];
 
         private GLib.Array<DirRow> rows;
         private GLib.Array<string> extra_dirs;
@@ -53,9 +54,11 @@ namespace Wizard {
         public FirstRunWizard (Gtk.Window? parent, AppConfig cfg) {
             set_transient_for (parent);
             set_modal (true);
+            set_position (Gtk.WindowPosition.CENTER_ON_PARENT);
             set_title ("欢迎使用 AppImage Manager");
             set_default_size (850, 560);
             set_border_width (0);
+            set_resizable (false);
             this.config = cfg;
 
             rows = new GLib.Array<DirRow> ();
@@ -93,10 +96,16 @@ namespace Wizard {
             box.set_spacing (6);
 
             step_dots = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8);
-            step_dots.pack_start (new Gtk.Label ("① 目录"), false, false, 0);
-            step_dots.pack_start (new Gtk.Label ("② 设置"), false, false, 0);
-            step_dots.pack_start (new Gtk.Label ("③ 完成"), false, false, 0);
+            string[] names = { "① 目录", "② 设置", "③ 完成" };
+            for (int i = 0; i < 3; i++) {
+                var l = new Gtk.Label (names[i]);
+                step_labels[i] = l;
+                step_dots.pack_start (l, false, false, 0);
+                if (i < 2)
+                    step_dots.pack_start (new Gtk.Label ("·"), false, false, 0);
+            }
             box.pack_start (step_dots, false, false, 0);
+            update_step_dots ();
 
             return box;
         }
@@ -391,8 +400,22 @@ namespace Wizard {
             string cur = stack.get_visible_child_name ();
             if (cur == STACK_DIR) {
                 if (selected_dirs ().length == 0) {
-                    warn ("请至少选择一个目录",
-                          "勾选一个已存在的目录，或点击「创建」新建一个。");
+                    // 区分「一个没勾」和「勾了但都不存在」——
+                    // 后者用户往往以为是程序坏了
+                    bool any_checked = false;
+                    for (uint i = 0; i < rows.length; i++) {
+                        var r = rows.index (i);
+                        if (r != null && r.check.get_active ())
+                            any_checked = true;
+                    }
+                    if (any_checked)
+                        warn ("所选目录都不存在",
+                              "这些目录还没被创建。\n"
+                              + "点目录行右侧的「创建」按钮新建，\n"
+                              + "或取消勾选它们、改用「浏览其他目录…」选择一个已有的目录。");
+                    else
+                        warn ("请至少选择一个目录",
+                              "勾选一个目录，或点「浏览其他目录…」添加。");
                     return;
                 }
                 stack.set_visible_child_name (STACK_ICON);
@@ -403,6 +426,7 @@ namespace Wizard {
                 apply_and_finish ();
             }
             update_buttons ();
+            update_step_dots ();
         }
 
         private void go_back () {
@@ -412,6 +436,23 @@ namespace Wizard {
             else if (cur == STACK_DONE)
                 stack.set_visible_child_name (STACK_ICON);
             update_buttons ();
+            update_step_dots ();
+        }
+
+        /** 高亮当前步骤，已走过的步骤维持普通色 */
+        private void update_step_dots () {
+            string cur = stack.get_visible_child_name ();
+            int active = 0;
+            if (cur == STACK_ICON)      active = 1;
+            else if (cur == STACK_DONE) active = 2;
+
+            for (int i = 0; i < 3; i++) {
+                unowned Gtk.StyleContext ctx = step_labels[i].get_style_context ();
+                ctx.remove_class ("wizard-step-active");
+                ctx.remove_class ("wizard-step-idle");
+                ctx.add_class (i == active ? "wizard-step-active"
+                                           : "wizard-step-idle");
+            }
         }
 
         private void update_buttons () {
