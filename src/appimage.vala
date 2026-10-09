@@ -58,7 +58,9 @@ namespace AppImageExtract {
     private static int64 counter = 0;
 
     /** 解包默认硬超时（秒） */
-    public const int DEFAULT_EXTRACT_TIMEOUT_SEC = 20;
+    // 60 秒：实测一个 555 MB 的 Electron AppImage 解包超过 20 秒。
+// 界面不会卡（跑在后台线程），用户可以随时取消，所以给宽一点更实用。
+public const int DEFAULT_EXTRACT_TIMEOUT_SEC = 60;
 
     /**
      * 跑一个子进程并等待结束，带硬超时。

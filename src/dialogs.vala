@@ -390,6 +390,16 @@ namespace Dialogs {
 
             var cancel = new GLib.Cancellable ();
 
+            // 把进度框的「取消」接到 Cancellable 上。
+            // worker 阻塞在解包里，只能由主线程去取消它。
+            uint watch_id = GLib.Timeout.add (200, () => {
+                if (prog.cancelled) {
+                    cancel.cancel ();
+                    return false;
+                }
+                return true;   // 继续观察
+            });
+
             var th = new GLib.Thread<void*> ("extract-meta", () => {
                 var einfo = AppImageExtract.run (entry.path, work, cancel,
                     AppImageExtract.DEFAULT_EXTRACT_TIMEOUT_SEC);
@@ -406,11 +416,12 @@ namespace Dialogs {
                 einfo.cleanup_extract ();
 
                 GLib.Idle.add (() => {
+                    GLib.Source.remove (watch_id);
                     prog.finish ();
                     if (!ok) {
-                        info (dlg, "提取失败",
+                        info (dlg, "提取未能完成",
                               err != "" ? err : "未能读取到内置元数据。\n"
-                              + "这很常见 —— 可以直接手工填写上面的字段。");
+                              + "这很常见 —— 直接手工填写上面的字段即可。");
                         return false;
                     }
                     if (m_name != "")
