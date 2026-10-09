@@ -171,6 +171,12 @@ namespace Repair {
     }
 
     /** 抓取某个完整组的原文（保留注释与顺序） */
+    /**
+     * 抓取某个完整组的原文（含组头，保留顺序）。
+     *
+     * 注意必须带上 `[Group Name]` 这一行 —— 否则 to_text 拼接回去时
+     * 组内容会变成主组里的孤儿键，Desktop Action 就废了。
+     */
     private static string collect_group (string text, string group_name) {
         var sb = new GLib.StringBuilder ();
         bool inside = false;
@@ -178,11 +184,16 @@ namespace Repair {
             string line = raw.strip ();
             if (line.has_prefix ("[") && line.has_suffix ("]")) {
                 string g = line.substring (1, line.length - 2);
-                if (g == group_name) { inside = true; continue; }
-                if (inside) break;
+                if (g == group_name) {
+                    inside = true;
+                    sb.append (line).append ("\n");   // ← 带上组头
+                    continue;
+                }
+                if (inside)
+                    break;
             }
             if (inside)
-                sb.append (raw.strip ()).append ("\n");
+                sb.append (line).append ("\n");
         }
         return sb.str.strip ();
     }
@@ -356,7 +367,7 @@ namespace Repair {
         if (plan.claim) {
             doc.set (DE, DesktopFiles.MARKER_BOOL, "true");
             doc.set (DE, DesktopFiles.MARKER_PATH, plan.app.path);
-            doc.set (DE, DesktopFiles.MARKER_VERSION, AppMgr.VERSION);
+            doc.set (DE, DesktopFiles.MARKER_VERSION, APPMGR_VERSION);
             fired.add ("C004");
         } else if (doc.get (DE, DesktopFiles.MARKER_BOOL) == "true") {
             // 已认领的保持标记

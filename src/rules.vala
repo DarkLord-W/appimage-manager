@@ -101,24 +101,25 @@ namespace RuleSet {
             r.bad_utf8 = true;
 
         // 组头（去 BOM 后）
+        // 规则：找到第一个非空、非注释行；它必须是 [Desktop Entry]。
         string text = r.has_bom ? body : data;
+        bool saw_header = false;
         foreach (string line in text.split ("\n")) {
             string t = line.strip ();
             if (t == "" || t.has_prefix ("#"))
                 continue;
-            r.missing_group = true;
+            if (t.has_prefix ("[") && t.has_suffix ("]")) {
+                saw_header = true;
+                r.missing_group = (t != "[Desktop Entry]");
+            } else {
+                // 第一个有效行是键值对 → 没有任何组头
+                saw_header = true;
+                r.missing_group = true;
+            }
             break;
         }
-        if (!r.missing_group) {
-            foreach (string line in text.split ("\n")) {
-                string t = line.strip ();
-                if (t.has_prefix ("[") && t.has_suffix ("]")) {
-                    if (t == "[Desktop Entry]")
-                        r.missing_group = false;
-                    break;
-                }
-            }
-        }
+        if (!saw_header)
+            r.missing_group = true;   // 整个文件没有有效内容
 
         // Version
         foreach (string line in text.split ("\n")) {
@@ -416,22 +417,50 @@ namespace RuleSet {
     /* ── 检测辅助 ────────────────────────────────────────────────── */
 
     /** Exec 是否需要加引号或转义 */
+    /**
+     * Exec 是否需要加引号 / 转义。
+     *
+     * 注意：不能只看「解析出来的路径」，因为未加引号时解析会在第一个空格处
+     * 截断，空格就消失了。必须检查原始 Exec 行本身。
+     */
     private static bool needs_escape (string exec_line, string extracted_path) {
-        if (exec_line == "" || extracted_path == "")
+        if (exec_line == "")
             return false;
-        // 已加引号就不算问题
-        if (exec_line.strip ().has_prefix ("\""))
+
+        string raw = exec_line.strip ();
+
+        // 已用双引号包裹 → 合规
+        if (raw.has_prefix ("\""))
             return false;
-        // 路径含空白必须加引号
-        for (int i = 0; i < extracted_path.length; i++) {
-            if (extracted_path[i] == ' ' || extracted_path[i] == '\t')
+
+        // 剥掉字段码，只看参数部分
+        var sb = new GLib.StringBuilder ();
+        for (int i = 0; i < raw.length; i++) {
+            if (raw[i] == '%' && i + 1 < raw.length) {
+                if (raw[i + 1] == '%') {
+                    sb.append_c ('%');
+                    i++;
+                    continue;
+                }
+                i++;
+                continue;
+            }
+            sb.append_c (raw[i]);
+        }
+        string args = sb.str.strip ();
+
+        // 未加引号却含空白 → 必然被截断
+        for (int i = 0; i < args.length; i++) {
+            if (args[i] == ' ' || args[i] == '\t')
                 return true;
         }
-        // 含 shell 元字符
-        for (int i = 0; i < extracted_path.length; i++) {
-            if ("\"'`$\\&|;<>*?()[]^{}#~".index_of_char (extracted_path[i]) >= 0)
+
+        // 含 shell 元字符 → 需要转义
+        for (int i = 0; i < args.length; i++) {
+            if ("\"'`$\\&|;<>*?()[]^{}#~".index_of_char (args[i]) >= 0)
                 return true;
         }
+
         return false;
     }
 

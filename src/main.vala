@@ -3,8 +3,8 @@
  */
 public class AppMgr : Gtk.Application {
 
-    /* 供 backup.vala / repair.vala / desktopfiles.vala 以 AppMgr.VERSION 引用 */
-    public const string VERSION = "1.0.0";
+    /* 供 backup.vala / repair.vala / desktopfiles.vala 以 APPMGR_VERSION 引用 */
+    /* 版本号定义在 version.vala 的 APPMGR_VERSION */
 
     private AppConfig config;
     private Store store;

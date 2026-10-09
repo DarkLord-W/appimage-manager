@@ -349,7 +349,7 @@ namespace DesktopFiles {
         if (write_marker) {
             sb.append ("%s=true\n".printf (MARKER_BOOL));
             sb.append ("%s=%s\n".printf (MARKER_PATH, path));
-            sb.append ("%s=%s\n".printf (MARKER_VERSION, AppMgr.VERSION));
+            sb.append ("%s=%s\n".printf (MARKER_VERSION, APPMGR_VERSION));
         }
 
         return sb.str;

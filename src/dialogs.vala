@@ -173,8 +173,7 @@ namespace Dialogs {
 
         /* ── 下半：写入内容预览 ───────────────────────────────── */
 
-        Gtk.TextBuffer? pbuf = null;
-        var prev = mk_textview (out pbuf);
+        var prev = mk_textview ();
         var prev_path = de.file_path;
         var frame = mk_frame ("将写入 " + AppPath.shorten (prev_path), mk_scrolled (prev, 220), 220);
         content.pack_start (frame, true, true, 0);
@@ -189,26 +188,26 @@ namespace Dialogs {
                 f_icon.text.strip (),
                 f_cat.text.strip (),
                 de.startup_wm_class,
-                de.mimetype,
+                entry.mimetype,
                 cfg.write_marker (),
                 "%U");
         }
 
-        var refresh = new Thunk (() => {
+        void refresh () {
             if (f_term.active) {
                 // build_content 固定写 Terminal=false，这里按开关改写预览
                 put_buffer (prev, build_preview ().replace ("Terminal=false", "Terminal=true"));
             } else {
                 put_buffer (prev, build_preview ());
             }
-        });
+        }
 
-        f_name.changed.connect (refresh.run);
-        f_cat.changed.connect (refresh.run);
-        f_icon.changed.connect (refresh.run);
-        f_comment.changed.connect (refresh.run);
-        f_term.toggled.connect (refresh.run);
-        refresh.run ();
+        f_name.changed.connect (() => { refresh (); });
+        f_cat.changed.connect (() => { refresh (); });
+        f_icon.changed.connect (() => { refresh (); });
+        f_comment.changed.connect (() => { refresh (); });
+        f_term.toggled.connect (() => { refresh (); });
+        refresh ();
 
         /* ── 按钮 ────────────────────────────────────────────── */
 
@@ -316,6 +315,72 @@ namespace Dialogs {
         }
         plan.mode = FixMode.CONSERVATIVE;
 
+        /* ── 提前声明：Vala 局部函数只能引用在其之前声明的变量/函数，
+         *    故部件变量先声明、稍后建 UI 时再赋值 ── */
+
+        Gtk.RadioButton? r_cons = null;
+        Gtk.RadioButton? r_enrich = null;
+        Gtk.RadioButton? r_rebuild = null;
+        Gtk.CheckButton[] keep_checks = new Gtk.CheckButton[0];
+        Gtk.CheckButton? rename_cb = null;
+        Gtk.TextView? diff_view = null;
+        Gtk.Label? status = null;
+        Gtk.Button? apply_btn = null;
+        Gtk.Widget[] drop_widgets = new Gtk.Widget[0];
+
+        string[] PRESERVE_OPTS = { "Name", "Comment", "Actions" };
+        string[] PRESERVE_DESC = {
+            "保留现有的 Name=（不采用 AppImage 内的名称）",
+            "保留现有的 Comment=",
+            "保留 Desktop Actions 分组及其 Actions= 引用"
+        };
+
+        string[] collect_preserve () {
+            var list = new GenericArray<string> ();
+            for (int i = 0; i < PRESERVE_OPTS.length; i++)
+                if (keep_checks[i] != null && keep_checks[i].active)
+                    list.add (PRESERVE_OPTS[i]);
+            return list.steal ();
+        }
+
+        void recount () {
+            int n = 0;
+            foreach (bool b in plan.selected)
+                if (b) n++;
+            status.label = "将应用 %d 项修改 · 模式：%s".printf (
+                n, mode_name (plan.mode));
+            if (apply_btn != null)
+                apply_btn.label = "备份并修复 %d 项".printf (n);
+            apply_btn.sensitive = (n > 0) || (plan.mode == FixMode.REBUILD);
+        }
+
+        void update_preview () {
+            plan.mode = r_cons.active ? FixMode.CONSERVATIVE
+                     : (r_enrich.active ? FixMode.ENRICH : FixMode.REBUILD);
+            plan.preserve_keys = collect_preserve ();
+
+            // 保留 Desktop Actions 需要 Actions= 与对应分组同时存在
+            if (r_rebuild.active && !keep_holds_actions (keep_checks))
+                plan.drop_keys = plan.drop_keys;
+
+            plan.rename_file = rename_cb.active;
+
+            string proposed = Repair.build_repaired (plan);
+            string diff = Repair.diff (plan.original_content, proposed);
+            put_buffer (diff_view, diff == "" ? "（无变化）" : diff);
+
+            // 丢弃区可见性
+            bool show_drop = (plan.mode == FixMode.REBUILD);
+            foreach (var w in drop_widgets)
+                w.visible = show_drop;
+
+            recount ();
+        }
+
+        void on_mode_changed () {
+            update_preview ();
+        }
+
         // 文件名规范化目标
         string cur_base = GLib.Path.get_basename (entry.entry.file_path);
         string slug = AppPath.slugify (cur_base.replace (".desktop", ""));
@@ -399,7 +464,7 @@ namespace Dialogs {
             badge.xalign = 0.0f;
             badge.set_line_wrap (true);
             if (!p.applyable) {
-                var t = badge.text;
+                var t = badge.label;
                 badge.label = t + " <span foreground='#95a5a6'>（需手工处理）</span>";
             }
             texts.pack_start (badge, false, false, 0);
@@ -429,11 +494,11 @@ namespace Dialogs {
         mode_title.xalign = 0.0f;
         flow.pack_start (mode_title, false, false, 0);
 
-        Gtk.RadioButton? r_cons = mk_radio (null, "保守",
+        r_cons = mk_radio (null, "保守",
             "只修明确坏掉的字段，不新增任何键");
-        Gtk.RadioButton? r_enrich = mk_radio (r_cons, "补全",
+        r_enrich = mk_radio (r_cons, "补全",
             "在保守基础上补齐 Icon / Categories / Comment 等缺失字段");
-        Gtk.RadioButton? r_rebuild = mk_radio (r_cons, "重建",
+        r_rebuild = mk_radio (r_cons, "重建",
             "整体重新生成 .desktop；下方未勾选的现有内容会丢失");
 
         var mode_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 4);
@@ -444,20 +509,13 @@ namespace Dialogs {
 
         /* ── 保留 / 丢弃 ─────────────────────────────────────── */
 
-        string[] PRESERVE_OPTS = { "Name", "Comment", "Actions" };
-        string[] PRESERVE_DESC = {
-            "保留现有的 Name=（不采用 AppImage 内的名称）",
-            "保留现有的 Comment=",
-            "保留 Desktop Actions 分组及其 Actions= 引用"
-        };
-
         var keep_title = new Gtk.Label (null);
         keep_title.use_markup = true;
         keep_title.label = "<b>将保留的现有内容</b>";
         keep_title.xalign = 0.0f;
         flow.pack_start (keep_title, false, false, 0);
 
-        Gtk.CheckButton[] keep_checks = new Gtk.CheckButton[PRESERVE_OPTS.length];
+        keep_checks = new Gtk.CheckButton[PRESERVE_OPTS.length];
         var keep_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 3);
         for (int i = 0; i < PRESERVE_OPTS.length; i++) {
             var cb = new Gtk.CheckButton.with_label (PRESERVE_DESC[i]);
@@ -485,12 +543,12 @@ namespace Dialogs {
         drop_lab.get_style_context ().add_class ("dim-label");
         flow.pack_start (drop_lab, false, false, 0);
 
-        Gtk.Widget[] drop_widgets = { drop_title, drop_lab };
+        drop_widgets = new Gtk.Widget[] { drop_title, drop_lab };
 
         /* ── 文件名规范化 ────────────────────────────────────── */
 
         bool name_differs = (prop_base != cur_base);
-        var rename_cb = new Gtk.CheckButton.with_label ("规范化文件名");
+        rename_cb = new Gtk.CheckButton.with_label ("规范化文件名");
         rename_cb.tooltip_text = "把启动器文件改成规范的 slug 名称";
         var rename_lab = mk_label (name_differs
             ? "%s  →  %s".printf (cur_base, prop_base)
@@ -519,73 +577,28 @@ namespace Dialogs {
         diff_title.xalign = 0.0f;
         flow.pack_start (diff_title, false, false, 0);
 
-        var diff_view = mk_textview ();
+        diff_view = mk_textview ();
         flow.pack_start (mk_frame ("将写入 " + AppPath.shorten (entry.entry.file_path),
             mk_scrolled (diff_view, 200), 200), false, false, 0);
 
         /* ── 状态：选中项数 ──────────────────────────────────── */
 
-        var status = mk_label ("");
+        status = mk_label ("");
         flow.pack_start (status, false, false, 0);
 
         int RESP_APPLY = 9003;
-        var apply_btn = add_button (dlg, "备份并修复", RESP_APPLY);
+        apply_btn = add_button (dlg, "备份并修复", RESP_APPLY);
         var auto_db = new Gtk.CheckButton.with_label ("修复后自动 update-desktop-database");
         auto_db.active = cfg.should_update_database ();
         dlg.get_action_area ().pack_start (auto_db, false, false, 8);
 
         add_button (dlg, "取消", Gtk.ResponseType.CANCEL);
 
-        /* ── 计算逻辑 ────────────────────────────────────────── */
+        /* ── 计算逻辑（局部函数已在方法开头提前定义）────────────── */
 
-        string[] collect_preserve () {
-            var list = new GenericArray<string> ();
-            for (int i = 0; i < PRESERVE_OPTS.length; i++)
-                if (keep_checks[i] != null && keep_checks[i].active)
-                    list.add (PRESERVE_OPTS[i]);
-            return list.steal ();
-        }
-
-        void update_preview () {
-            plan.mode = r_cons.active ? FixMode.CONSERVATIVE
-                     : (r_enrich.active ? FixMode.ENRICH : FixMode.REBUILD);
-            plan.preserve_keys = collect_preserve ();
-
-            // 保留 Desktop Actions 需要 Actions= 与对应分组同时存在
-            if (r_rebuild.active && !keep_holds_actions (keep_checks))
-                plan.drop_keys = plan.drop_keys;
-
-            plan.rename_file = rename_cb.active;
-
-            string proposed = Repair.build_repaired (plan);
-            string diff = Repair.diff (plan.original_content, proposed);
-            put_buffer (diff_view, diff == "" ? "（无变化）" : diff);
-
-            // 丢弃区可见性
-            bool show_drop = (plan.mode == FixMode.REBUILD);
-            foreach (var w in drop_widgets)
-                w.visible = show_drop;
-
-            recount ();
-        }
-
-        void recount () {
-            int n = 0;
-            foreach (bool b in plan.selected)
-                if (b) n++;
-            status.label = "将应用 %d 项修改 · 模式：%s".printf (
-                n, mode_name (plan.mode));
-            if (apply_btn != null)
-                apply_btn.label = "备份并修复 %d 项".printf (n);
-            apply_btn.sensitive = (n > 0) || (plan.mode == FixMode.REBUILD);
-        }
-
-        void on_mode_changed () {
-            update_preview ();
-        }
-        r_cons.toggled.connect (on_mode_changed);
-        r_enrich.toggled.connect (on_mode_changed);
-        r_rebuild.toggled.connect (on_mode_changed);
+        r_cons.toggled.connect (() => { on_mode_changed (); });
+        r_enrich.toggled.connect (() => { on_mode_changed (); });
+        r_rebuild.toggled.connect (() => { on_mode_changed (); });
 
         foreach (var cb in keep_checks)
             if (cb != null) cb.toggled.connect (() => { update_preview (); });
@@ -677,6 +690,7 @@ namespace Dialogs {
         private Gtk.Label count_label;
 
         private bool cancel_flag = false;
+        private bool suppress_response = false;
         private Gtk.Button cancel_button;
 
         /** worker 在每一步检查此标志 */
@@ -685,9 +699,10 @@ namespace Dialogs {
         }
 
         private void on_response (int id) {
+            if (suppress_response)
+                return;
             if (id == Gtk.ResponseType.CANCEL)
                 cancel_flag = true;
-            stop_emission_by_name ("response");
         }
 
         public ProgressDialog (Gtk.Window? parent, string title) {
@@ -760,9 +775,9 @@ namespace Dialogs {
             Gtk.TextIter end;
             buf.get_end_iter (out end);
             if (color != null) {
-                buf.insert_with_tags_by_name (end, text + "\n", color);
+                buf.insert_with_tags_by_name (ref end, text + "\n", -1, color);
             } else {
-                buf.insert (end, text + "\n");
+                buf.insert (ref end, text + "\n", -1);
             }
             // 滚到底
             Gtk.TextIter tail;
@@ -774,6 +789,7 @@ namespace Dialogs {
 
         /** 关闭并销毁；worker 结束后调用 */
         public void finish () {
+            suppress_response = true;
             hide ();
             destroy ();
         }
@@ -1101,7 +1117,7 @@ namespace Dialogs {
             "%s=true\n%s=%s\n%s=%s".printf (
                 DesktopFiles.MARKER_BOOL,
                 DesktopFiles.MARKER_PATH, entry.path,
-                DesktopFiles.MARKER_VERSION, AppMgr.VERSION);
+                DesktopFiles.MARKER_VERSION, APPMGR_VERSION);
         content.pack_start (mk_frame ("标记键", mk_scrolled (marker_view, 90), 90), false, false, 0);
 
         var diff_view = mk_textview ();
@@ -1250,7 +1266,7 @@ namespace Dialogs {
             out.append_c ('\n');
         out.append ("%s=true\n".printf (DesktopFiles.MARKER_BOOL));
         out.append ("%s=%s\n".printf (DesktopFiles.MARKER_PATH, entry.path));
-        out.append ("%s=%s\n".printf (DesktopFiles.MARKER_VERSION, AppMgr.VERSION));
+        out.append ("%s=%s\n".printf (DesktopFiles.MARKER_VERSION, APPMGR_VERSION));
 
         plan.proposed_content = out.str;
         return plan.proposed_content;
@@ -1414,8 +1430,8 @@ namespace Dialogs {
         content.set_border_width (12);
         content.set_spacing (10);
 
-        var store = new Gtk.ListStore (Gtk.Type.STRING, Gtk.Type.STRING,
-            Gtk.Type.STRING, Gtk.Type.STRING, Gtk.Type.INT, Gtk.Type.INT);
+        var store = new Gtk.ListStore (6, typeof (string), typeof (string),
+            typeof (string), typeof (string), typeof (int), typeof (int));
         var tree = new Gtk.TreeView ();
         tree.set_model (store);
 
@@ -1453,9 +1469,11 @@ namespace Dialogs {
         }
 
         string selected_txid () {
+            if (sel == null)
+                return "";
             Gtk.TreeModel model;
             Gtk.TreeIter iter;
-            if (sel == null || !sel.get_selected (out model, out iter))
+            if (!sel.get_selected (out model, out iter))
                 return "";
             GLib.Value v;
             model.get_value (iter, 0, out v);
@@ -1465,8 +1483,8 @@ namespace Dialogs {
         }
 
         // 第 6 列放 txid 原值
-        var hidden = new Gtk.ListStore (Gtk.Type.STRING, Gtk.Type.STRING,
-            Gtk.Type.STRING, Gtk.Type.STRING, Gtk.Type.INT, Gtk.Type.INT, Gtk.Type.STRING);
+        var hidden = new Gtk.ListStore (7, typeof (string), typeof (string),
+            typeof (string), typeof (string), typeof (int), typeof (int), typeof (string));
         tree.set_model (hidden);
 
         void refresh_list2 () {
@@ -1489,9 +1507,11 @@ namespace Dialogs {
         }
 
         string current_txid () {
+            if (sel == null)
+                return "";
             Gtk.TreeModel model;
             Gtk.TreeIter iter;
-            if (sel == null || !sel.get_selected (out model, out iter))
+            if (!sel.get_selected (out model, out iter))
                 return "";
             GLib.Value v;
             model.get_value (iter, 5, out v);
@@ -1578,7 +1598,10 @@ namespace Dialogs {
 
     private void add_col (Gtk.TreeView tree, string title, int col, bool expand) {
         var r = new Gtk.CellRendererText ();
-        var c = new Gtk.TreeViewColumn (title, r, "text", col);
+        var c = new Gtk.TreeViewColumn ();
+        c.title = title;
+        c.pack_start (r, true);
+        c.add_attribute (r, "text", col);
         if (expand)
             c.set_expand (true);
         else
