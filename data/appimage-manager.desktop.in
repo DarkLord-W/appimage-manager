@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=AppImage Manager
+GenericName=AppImage 管理器
+Comment=扫描 AppImage、管理目录并创建 / 修复桌面启动器
+Exec=@PREFIX@/bin/appimage-manager %U
+Icon=@PREFIX@/share/icons/hicolor/256x256/apps/appimage-manager.png
+Terminal=false
+Categories=System;Utility;Settings;
+Keywords=appimage;desktop;launcher;entry;manager;
+StartupNotify=true
