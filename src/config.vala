@@ -48,6 +48,10 @@ public class AppConfig : GLib.Object {
         set_bool ("sync", "write_managed_marker", true);
         set_bool ("sync", "delete_icon_with_launcher", false);
 
+        // 从 AppImage 提取内置元数据（解包）
+        set_int  ("extract", "timeout_sec", 60);
+        set_bool ("extract", "auto_on_create", false);
+
         set_bool ("repair", "confirm_destructive", true);
         set_int  ("repair", "parallel_extraction", 4);
         set_int  ("repair", "batch_failure_policy", 0); // 0=回滚中止 1=跳过继续
@@ -204,6 +208,25 @@ public class AppConfig : GLib.Object {
     public bool should_update_icon_cache () { return get_bool ("sync", "update_icon_cache", true); }
     public bool write_marker () { return get_bool ("sync", "write_managed_marker", true); }
     public bool delete_icon_with_launcher () { return get_bool ("sync", "delete_icon_with_launcher", false); }
+
+    /**
+     * 解包超时秒数。
+     *
+     * 实测一个 555 MB 的 Electron AppImage 解包超过 20 秒，所以默认给 60。
+     * 界面不会因此卡住（跑在后台线程），用户可以随时取消，但太长的默认值
+     * 会让「点了没反应」的观感变差，所以允许按机器快慢调。
+     */
+    public int extract_timeout () {
+        int t = get_int ("extract", "timeout_sec", 60);
+        if (t < 5) t = 5;
+        if (t > 600) t = 600;
+        return t;
+    }
+
+    /** 打开创建对话框时是否自动尝试提取内置元数据（默认关）*/
+    public bool auto_extract_on_create () {
+        return get_bool ("extract", "auto_on_create", false);
+    }
 
     public int extraction_threads () {
         int n = get_int ("repair", "parallel_extraction", 4);

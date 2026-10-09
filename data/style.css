@@ -178,6 +178,26 @@ menubar > menuitem:hover {
     margin-bottom: 4px;
 }
 
+/* 列表区内的空目录提示：目录里没有 AppImage 时顶替列表显示，
+ * 与整页空状态区分开，避免看起来像整个资料库为空。 */
+.list-empty-hint {
+    padding: 32px 12px;
+}
+
+.list-empty-hint image {
+    opacity: 0.35;
+}
+
+.list-empty-hint label.title {
+    font-size: 115%;
+    font-weight: bold;
+}
+
+.list-empty-hint label.hint {
+    color: @insensitive_fg_color;
+    font-size: 92%;
+}
+
 /* 常见位置 / 设置项里的选项卡片 */
 .option-card {
     padding: 8px 10px;
@@ -341,26 +361,21 @@ treeview.view.app-list:selected:focus {
     border: 1px solid alpha(@error_color, 0.28);
 }
 
-/* ── 向导 ───────────────────────────────────────────────────────────────── */
+/* ── 设置对话框 ───────────────────────────────────────────────────────────
+ * 注意：GTK3 的 CSS 不认 row-spacing/column-spacing —— 它们是 Gtk.Grid 的
+ * GObject 属性而非样式属性，写了会直接报解析错误。网格间距只能由代码调用
+ * set_row_spacing()/set_column_spacing() 设置；这里只负责标题与说明文字。
+ */
 
-.wizard-step-active {
-    color: @accent_bg_color;
+.settings-section-title {
     font-weight: bold;
-}
-
-.wizard-step-idle {
+    margin-top: 6px;
     color: @insensitive_fg_color;
 }
 
-.wizard-hero {
-    font-size: 160%;
-    font-weight: bold;
-    margin-bottom: 6px;
-}
-
-.wizard-hint {
-    color: @insensitive_fg_color;
+.settings-note {
     font-size: 92%;
+    color: @insensitive_fg_color;
 }
 
 /* 设置页里成组的选项卡片 */
@@ -376,7 +391,45 @@ treeview.view.app-list:selected:focus {
     background-color: alpha(@accent_bg_color, 0.10);
 }
 
-/* ── InfoBar ────────────────────────────────────────────────────────────── */
+/* ── InfoBar ──────────────────────────────────────────────────────────────
+ * 操作结果只通过这一条横幅反馈，因此按消息类型染色让用户一眼看到成败，
+ * 而不是要读完文字才明白发生了什么。
+ */
+
+infobar {
+    border: none;
+    border-top: 1px solid @borders;
+    box-shadow: none;
+}
+
+infobar > revealer > box {
+    padding: 8px 12px;
+}
+
+infobar.info {
+    background-color: alpha(@accent_bg_color, 0.14);
+    border-left: 3px solid @accent_bg_color;
+}
+
+infobar.warning {
+    background-color: alpha(@warning_color, 0.16);
+    border-left: 3px solid @warning_color;
+}
+
+infobar.error {
+    background-color: alpha(@error_color, 0.16);
+    border-left: 3px solid @error_color;
+}
+
+infobar label {
+    font-size: 94%;
+}
+
+/* 操作按钮不能看起来像纯文本链接，否则不像可点 */
+infobar button {
+    padding: 4px 10px;
+    border-radius: 5px;
+}
 
 infobar.warning label,
 infobar.warning button {

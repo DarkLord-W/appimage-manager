@@ -319,8 +319,8 @@ namespace Dialogs {
         extract_btn.set_tooltip_text (
             "解包 AppImage 读取它自带的名称 / 图标 / 分类。\n"
             + "较慢（可能几十秒），且对旧格式或自定义运行时会失败 ——\n"
-            + "有 %d 秒硬超时，不会卡住界面。".printf (
-                AppImageExtract.DEFAULT_EXTRACT_TIMEOUT_SEC));
+            + "有 %d 秒硬超时，不会卡住界面；超时秒数可在「工具 → 设置」里调整。"
+              .printf (cfg.extract_timeout ()));
         extract_row.pack_start (extract_btn, false, false, 0);
 
         var extract_note = new Gtk.Label (
@@ -414,7 +414,7 @@ namespace Dialogs {
 
         /* ── 提取（后台线程 + 可取消）─────────────────────────── */
 
-        extract_btn.clicked.connect (() => {
+        void do_extract () {
             var prog = Dialogs.progress (dlg, "正在提取内置元数据");
             prog.set_progress (0, 1, entry.basename);
 
@@ -436,7 +436,7 @@ namespace Dialogs {
 
             var th = new GLib.Thread<void*> ("extract-meta", () => {
                 var einfo = AppImageExtract.run (entry.path, work, cancel,
-                    AppImageExtract.DEFAULT_EXTRACT_TIMEOUT_SEC);
+                                                 cfg.extract_timeout ());
                 bool ok = einfo.ok;
                 string err = einfo.error;
 
@@ -475,7 +475,9 @@ namespace Dialogs {
                 });
                 return null;
             });
-        });
+        }
+
+        extract_btn.clicked.connect (() => { do_extract (); });
 
         /* ── 按钮 ──────────────────────────────────────────────── */
 
@@ -492,6 +494,10 @@ namespace Dialogs {
         set_icon ("");
         dlg.show_all ();
         refresh_preview ();
+
+        // 设置里开了开关就自动跑一次；用户仍可随时取消
+        if (cfg.auto_extract_on_create ())
+            GLib.Idle.add (() => { do_extract (); return false; });
 
         int resp = dlg.run ();
         bool want_default = default_rest.get_active ();
@@ -1738,6 +1744,36 @@ namespace Dialogs {
         flow.pack_start (sw_marker, false, false, 0);
         flow.pack_start (sw_del_icon, false, false, 0);
 
+        /* ── 元数据提取（解包）───────────────────────────────
+         *
+         * 解包是唯一会「慢」的操作，而且对不认 --appimage-extract 的
+         * 运行时会一直卡住。默认走手工填写、不自动提取；这里给愿意用
+         * 它的人两个旋钮。
+         */
+        flow.pack_start (section_title ("元数据提取"), false, false, 0);
+
+        var sw_autoextract = mk_switch (
+            "创建启动器时自动尝试提取内置元数据", cfg.auto_extract_on_create ());
+        sw_autoextract.get_style_context ().add_class ("settings-row");
+        flow.pack_start (sw_autoextract, false, false, 0);
+
+        var ext_note = mk_label ("默认关闭。开启后每次创建都会先解包，较慢；"
+                                 + "关掉的话可以在创建对话框里手动点「尝试提取内置元数据」。");
+        ext_note.get_style_context ().add_class ("settings-note");
+        ext_note.set_line_wrap (true);
+        flow.pack_start (ext_note, false, false, 0);
+
+        var timeout_spin = new Gtk.SpinButton.with_range (5, 600, 5);
+        timeout_spin.value = cfg.extract_timeout ();
+        timeout_spin.numeric = true;
+        flow.pack_start (labelled ("解包超时（秒）", timeout_spin), false, false, 0);
+
+        var timeout_note = mk_label ("实测一个 555 MB 的 AppImage 解包超过 20 秒。"
+                                     + "超时会强制终止并清理，界面不会卡住。");
+        timeout_note.get_style_context ().add_class ("settings-note");
+        timeout_note.set_line_wrap (true);
+        flow.pack_start (timeout_note, false, false, 0);
+
         flow.pack_start (section_title ("备份"), false, false, 0);
         var sw_backup = mk_switch ("启用备份（修复前自动存档）", cfg.backup_enabled ());
         flow.pack_start (sw_backup, false, false, 0);
@@ -1794,6 +1830,8 @@ namespace Dialogs {
         cfg.set_bool ("sync", "update_icon_cache", sw_uic.active);
         cfg.set_bool ("sync", "write_managed_marker", sw_marker.active);
         cfg.set_bool ("sync", "delete_icon_with_launcher", sw_del_icon.active);
+        cfg.set_bool ("extract", "auto_on_create", sw_autoextract.active);
+        cfg.set_int  ("extract", "timeout_sec", (int) timeout_spin.value);
         cfg.set_bool ("backup", "enabled", sw_backup.active);
         cfg.set_int  ("backup", "retention_days", (int) days.value);
         cfg.set_int  ("backup", "retention_tx", (int) txs.value);

@@ -188,6 +188,7 @@ public class MainWindow : Gtk.ApplicationWindow {
     private Gtk.Overlay? content = null;
     private Gtk.Stack? content_stack = null;
     private Gtk.Widget? empty_state = null;
+    private Gtk.Widget? list_empty_hint = null;
     private Gtk.ScrolledWindow? filter_scroll = null;
     private Gtk.TreeViewColumn? pill_col = null;
     private PillRenderer? pill_renderer = null;
@@ -566,6 +567,34 @@ public class MainWindow : Gtk.ApplicationWindow {
         overlay_revealer.show ();
 
         content.add_overlay (overlay_revealer);
+
+        // 有扫描目录、但一个 AppImage 都没扫到时的提示。
+        // 比一片空白强 —— 用户至少知道程序跑了、只是没东西。
+        list_empty_hint = build_list_empty_hint ();
+        content.add_overlay (list_empty_hint);
+        list_empty_hint.hide ();   // 初始隐藏，由 update_list_hint() 决定
+    }
+
+    private Gtk.Widget build_list_empty_hint () {
+        var box = new Gtk.Box (Gtk.Orientation.VERTICAL, 8);
+        box.get_style_context ().add_class ("list-empty-hint");
+        box.set_halign (Gtk.Align.CENTER);
+        box.set_valign (Gtk.Align.CENTER);
+
+        var icon = new Gtk.Image.from_icon_name ("edit-find-symbolic",
+                                                 Gtk.IconSize.DIALOG);
+        icon.set_pixel_size (48);
+        box.pack_start (icon, false, false, 0);
+
+        var title = new Gtk.Label ("这个目录里没有找到 AppImage");
+        title.get_style_context ().add_class ("title");
+        box.pack_start (title, false, false, 0);
+
+        var hint = new Gtk.Label ("换一个目录，或在菜单里点「视图 → 重新扫描」再试一次");
+        hint.get_style_context ().add_class ("hint");
+        box.pack_start (hint, false, false, 0);
+
+        return box;
     }
 
     private Gtk.Button mk_action (string label, string tip, owned GLib.SourceFunc cb) {
@@ -647,6 +676,18 @@ public class MainWindow : Gtk.ApplicationWindow {
             return;
         bool no_dirs = (config.scan_dirs ().length == 0);
         content_stack.set_visible_child_name (no_dirs ? "empty" : "list");
+    }
+
+    /**
+     * 有扫描目录但一个条目都没有时，在列表上叠一句提示。
+     * 与「没有目录」的空状态区分开：那是有目录却没东西。
+     */
+    private void update_list_hint () {
+        if (list_empty_hint == null)
+            return;
+        bool no_dirs = (config.scan_dirs ().length == 0);
+        int n = (int) store.entries.length ();
+        list_empty_hint.visible = (!no_dirs && n == 0);
     }
 
     /** 「看看常见位置」：列出常见目录，可勾选并直接创建不存在的 */
@@ -835,6 +876,7 @@ public class MainWindow : Gtk.ApplicationWindow {
             refresh_btn.set_sensitive (true);
             rebuild_dir_chips ();
             update_empty_state ();
+            update_list_hint ();
             update_subtitle ();
             check_infobar ();
             update_selection_ui ();
