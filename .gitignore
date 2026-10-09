@@ -1,9 +1,11 @@
 # 构建产物
 build/
 *.o
-*.c
-*.vala.c
+.vala-stamp
 appimage-manager
+appimage-manager-selftest
+src/*.c
+src/*.d
 
 # 编辑器
 .vscode/
