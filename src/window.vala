@@ -1,6 +1,3 @@
-/** 无返回值的动作回调，供菜单项这类只需要触发的场景使用 */
-public delegate void SimpleAction ();
-
 /*
  * window.vala — 主窗口
  *
@@ -17,8 +14,9 @@ public class MainWindow : Gtk.ApplicationWindow {
     private AppConfig config;
     private Store store;
 
-    // ── 顶栏 ──────────────────────────────────────────────────────
-    private Gtk.HeaderBar header;
+    // ── 工具栏与菜单 ──────────────────────────────────────────────
+    private Gtk.Box toolbar;
+    private Gtk.AccelGroup accel_group;
     private Gtk.Label subtitle_label;
     private Gtk.SearchEntry search;
     private Gtk.Button refresh_btn;
@@ -90,7 +88,6 @@ public class MainWindow : Gtk.ApplicationWindow {
 
     public MainWindow (AppMgr app) {
         // Vala 要求构造属性赋值必须是构造函数的第一条语句。
-        // 放在其它语句之后会导致 g_object_new 之后字段仍未被正确初始化而崩溃。
         //
         // 必须把 application 设为构造属性：否则 Gtk.Application 不认为
         // 这个窗口属于自己，会在数完窗口数=0 后立即退出主循环。
@@ -103,18 +100,35 @@ public class MainWindow : Gtk.ApplicationWindow {
         this.config = app.get_config ();
         this.store = app.get_store ();
 
-        set_size_request (780, 480);
+        // 最小尺寸：能缩到和别的窗口并排。过滤+操作条那一行套了横向
+        // 滚动，所以窄窗口下不会破版。
+        set_size_request (620, 400);
         icon_name = "appimage-manager";
 
-        build_header ();
+        // 用原生窗口装饰（不再 set_titlebar），最小化/最大化/关闭由窗口
+        // 管理器绘制 —— 自绘标题栏在第三方主题（如 Windows-10）下会把
+        // 这两个按钮画成空白圆圈。
+        set_wmclass ("AppImage Manager", "AppImage Manager");
+
+        build_toolbar ();
         build_body ();
         build_infobar ();
+        build_empty_state ();
 
         var root = new Gtk.Box (Gtk.Orientation.VERTICAL, 0);
-        root.pack_start (header, false, false, 0);
+
+        accel_group = new Gtk.AccelGroup ();
+        add_accel_group (accel_group);
+
+        root.pack_start (new Menus.AppMenuBar (this, accel_group), false, false, 0);
+        root.pack_start (toolbar, false, false, 0);
         root.pack_start (dir_bar_widget, false, false, 0);
-        root.pack_start (filter_bar_widget, false, false, 0);
-        root.pack_start (content, true, true, 0);
+        // 这一行控件多，窄窗口下让它横向滚动，而不是撑破最小宽度
+        filter_scroll = new Gtk.ScrolledWindow (null, null);
+        filter_scroll.set_policy (Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER);
+        filter_scroll.add (filter_bar_widget);
+        root.pack_start (filter_scroll, false, false, 0);
+        root.pack_start (content_stack, true, true, 0);
         root.pack_start (infobar, false, false, 0);
         add (root);
 
@@ -128,70 +142,41 @@ public class MainWindow : Gtk.ApplicationWindow {
             refresh ();
         else
             update_subtitle ();
+
+        update_empty_state ();
     }
 
     // ══════════════════════════════════════════════════════════════
-    //  构建：顶栏
+    //  构建：工具栏（重新扫描 / 搜索 / 统计）
     // ══════════════════════════════════════════════════════════════
 
-    private void build_header () {
-        header = new Gtk.HeaderBar ();
-        header.set_show_close_button (true);
+    private void build_toolbar () {
+        toolbar = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8);
+        toolbar.get_style_context ().add_class ("app-toolbar");
 
-        // 菜单
-        var menu_btn = new Gtk.MenuButton ();
-        menu_btn.set_tooltip_text ("菜单");
-        var menu_icon = new Gtk.Image.from_icon_name ("open-menu-symbolic",
-                                                     Gtk.IconSize.BUTTON);
-        menu_btn.set_image (menu_icon);
-
-        var menu = new Gtk.Menu ();
-        add_menu_item (menu, "扫描目录…", () => { on_menu_dirs (); return false; });
-        add_menu_item (menu, "修复历史…", () => { on_menu_history (); return false; });
-        menu.append (new Gtk.SeparatorMenuItem ());
-        add_menu_item (menu, "健康检查", () => { on_menu_health (); return false; });
-        add_menu_item (menu, "失效与孤儿清理…", () => { on_menu_cleanup (); return false; });
-        menu.append (new Gtk.SeparatorMenuItem ());
-        add_menu_item (menu, "设置…", () => { on_menu_settings (); return false; });
-        add_menu_item (menu, "关于", () => { on_menu_about (); return false; });
-        menu.show_all ();
-        menu_btn.set_popup (menu);
-        header.pack_start (menu_btn);
-
-        // 标题 + 副标题
-        var title_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 0);
-        var title_label = new Gtk.Label ("AppImage Manager");
-        title_label.get_style_context ().add_class ("app-title");
-        subtitle_label = new Gtk.Label ("正在初始化…");
-        subtitle_label.get_style_context ().add_class ("app-subtitle");
-        title_box.pack_start (title_label, false, false, 0);
-        title_box.pack_start (subtitle_label, false, false, 0);
-        header.set_custom_title (title_box);
-
-        // 刷新
         refresh_btn = new Gtk.Button ();
-        refresh_btn.set_tooltip_text ("重新扫描 (Ctrl+R)");
+        refresh_btn.set_tooltip_text ("重新扫描 (F5)");
+        refresh_btn.set_always_show_image (true);
+        refresh_btn.set_label ("重新扫描");
         var refresh_icon = new Gtk.Image.from_icon_name ("view-refresh-symbolic",
                                                          Gtk.IconSize.BUTTON);
         refresh_btn.set_image (refresh_icon);
-        header.pack_end (refresh_btn);
+        toolbar.pack_start (refresh_btn, false, false, 0);
 
-        // 扫描中的旋转指示
         spinner = new Gtk.Spinner ();
         spinner.set_no_show_all (true);
-        header.pack_end (spinner);
+        toolbar.pack_start (spinner, false, false, 0);
 
-        // 搜索
         search = new Gtk.SearchEntry ();
         search.set_placeholder_text ("搜索名称或路径…");
-        search.set_width_chars (22);
-        header.pack_end (search);
-    }
+        search.set_width_chars (24);
+        toolbar.pack_start (search, false, false, 0);
 
-    private void add_menu_item (Gtk.Menu menu, string label, owned GLib.SourceFunc cb) {
-        var item = new Gtk.MenuItem.with_label (label);
-        item.activate.connect (() => { cb (); });
-        menu.append (item);
+        // 右侧实时统计
+        subtitle_label = new Gtk.Label ("正在初始化…");
+        subtitle_label.get_style_context ().add_class ("app-subtitle");
+        subtitle_label.set_ellipsize (Pango.EllipsizeMode.END);
+        toolbar.pack_end (subtitle_label, false, false, 0);
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -201,6 +186,9 @@ public class MainWindow : Gtk.ApplicationWindow {
     private Gtk.ScrolledWindow? dir_bar_widget = null;
     private Gtk.Box? filter_bar_widget = null;
     private Gtk.Overlay? content = null;
+    private Gtk.Stack? content_stack = null;
+    private Gtk.Widget? empty_state = null;
+    private Gtk.ScrolledWindow? filter_scroll = null;
     private Gtk.TreeViewColumn? pill_col = null;
     private PillRenderer? pill_renderer = null;
 
@@ -230,6 +218,7 @@ public class MainWindow : Gtk.ApplicationWindow {
     /** 供 main.vala 在向导结束后刷新目录 chips */
     public void rebuild_dir_chips_public () {
         rebuild_dir_chips ();
+        update_empty_state ();
         update_subtitle ();
     }
 
@@ -602,6 +591,140 @@ public class MainWindow : Gtk.ApplicationWindow {
     }
 
     // ══════════════════════════════════════════════════════════════
+    //  空状态引导（替代首次运行向导）
+    // ══════════════════════════════════════════════════════════════
+
+    private void build_empty_state () {
+        var box = new Gtk.Box (Gtk.Orientation.VERTICAL, 14);
+        box.set_valign (Gtk.Align.CENTER);
+        box.set_halign (Gtk.Align.CENTER);
+        box.set_border_width (32);
+
+        var icon = new Gtk.Image.from_icon_name ("folder-symbolic",
+                                                 Gtk.IconSize.DIALOG);
+        icon.set_pixel_size (72);
+        icon.get_style_context ().add_class ("empty-icon");
+        box.pack_start (icon, false, false, 0);
+
+        var title = new Gtk.Label (null);
+        title.use_markup = true;
+        title.label = "<span size='x-large' weight='bold'>还没有添加扫描目录</span>";
+        box.pack_start (title, false, false, 0);
+
+        var hint = new Gtk.Label (
+            "添加一个目录，程序会扫描其中的 AppImage，\n"
+            + "并帮你创建规范的桌面启动器。");
+        hint.set_justify (Gtk.Justification.CENTER);
+        hint.get_style_context ().add_class ("dim-label");
+        box.pack_start (hint, false, false, 0);
+
+        var btn_row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 10);
+        btn_row.set_halign (Gtk.Align.CENTER);
+
+        var add = new Gtk.Button.with_label ("添加目录…");
+        add.get_style_context ().add_class ("suggested-action");
+        add.clicked.connect (() => on_add_dir ());
+        btn_row.pack_start (add, false, false, 0);
+
+        var common = new Gtk.Button.with_label ("看看常见位置");
+        common.clicked.connect (() => on_common_locations ());
+        btn_row.pack_start (common, false, false, 0);
+
+        box.pack_start (btn_row, false, false, 0);
+
+        empty_state = box;
+
+        content_stack = new Gtk.Stack ();
+        content_stack.set_transition_type (Gtk.StackTransitionType.CROSSFADE);
+        content_stack.set_transition_duration (180);
+        content_stack.add_named (content, "list");
+        content_stack.add_named (empty_state, "empty");
+    }
+
+    /** 没有扫描目录时显示引导页，否则显示列表 */
+    private void update_empty_state () {
+        if (content_stack == null)
+            return;
+        bool no_dirs = (config.scan_dirs ().length == 0);
+        content_stack.set_visible_child_name (no_dirs ? "empty" : "list");
+    }
+
+    /** 「看看常见位置」：列出常见目录，可勾选并直接创建不存在的 */
+    private void on_common_locations () {
+        string[] candidates = {
+            GLib.Path.build_filename (GLib.Environment.get_home_dir (), "Applications"),
+            GLib.Path.build_filename (GLib.Environment.get_home_dir (), "apps"),
+            GLib.Path.build_filename (GLib.Environment.get_home_dir (), "AppImages"),
+            "/opt/appimages"
+        };
+
+        var dlg = new Gtk.Dialog.with_buttons ("常见位置", this,
+            Gtk.DialogFlags.MODAL, "取消", Gtk.ResponseType.CANCEL,
+            "添加选中的目录", Gtk.ResponseType.OK);
+        dlg.set_default_size (560, 320);
+        dlg.set_border_width (12);
+
+        var box = new Gtk.Box (Gtk.Orientation.VERTICAL, 6);
+        var checks = new GLib.GenericArray<Gtk.CheckButton> ();
+        var paths = new GLib.GenericArray<string> ();
+
+        var head = new Gtk.Label (
+            "勾选要扫描的目录。不存在的会一并创建。");
+        head.set_xalign (0.0f);
+        head.get_style_context ().add_class ("dim-label");
+        box.pack_start (head, false, false, 6);
+
+        foreach (string c in candidates) {
+            bool exists = AppPath.is_dir (c);
+
+            var row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8);
+            row.get_style_context ().add_class ("option-card");
+
+            var cb = new Gtk.CheckButton ();
+            cb.set_active (exists);
+            row.pack_start (cb, false, false, 0);
+
+            var lab = new Gtk.Label (AppPath.shorten (c));
+            lab.set_xalign (0.0f);
+            lab.set_ellipsize (Pango.EllipsizeMode.MIDDLE);
+            row.pack_start (lab, true, true, 0);
+
+            var st = new Gtk.Label (exists ? "已存在" : "不存在，将创建");
+            st.get_style_context ().add_class ("dim-label");
+            row.pack_start (st, false, false, 0);
+
+            checks.add (cb);
+            paths.add (c);
+            box.pack_start (row, false, false, 0);
+        }
+
+        dlg.get_content_area ().add (box);
+        dlg.show_all ();
+
+        if (dlg.run () == Gtk.ResponseType.OK) {
+            int added = 0;
+            unowned Gtk.CheckButton[] chk = (Gtk.CheckButton[]) checks.data;
+            string[] pth = paths.steal ();
+            for (uint i = 0; i < checks.length; i++) {
+                if (!chk[i].get_active ())
+                    continue;
+                string d = pth[i];
+                if (!AppPath.is_dir (d) && !AppPath.ensure_dir (d))
+                    continue;
+                config.add_scan_dir (d);
+                added++;
+            }
+            if (added > 0) {
+                config.save ();
+                rebuild_dir_chips ();
+                update_empty_state ();
+                refresh ();
+            }
+        }
+        dlg.destroy ();
+    }
+
+    // ══════════════════════════════════════════════════════════════
     //  样式与快捷键
     // ══════════════════════════════════════════════════════════════
 
@@ -639,8 +762,8 @@ public class MainWindow : Gtk.ApplicationWindow {
     }
 
     private void install_accels () {
-        var accel = new Gtk.AccelGroup ();
-        add_accel_group (accel);
+        // 复用菜单栏已经在用的 accel_group，避免建两个
+        var accel = accel_group;
 
         accel.connect (Gdk.Key.r, Gdk.ModifierType.CONTROL_MASK,
                        Gtk.AccelFlags.VISIBLE, () => { refresh (); return true; });
@@ -656,6 +779,8 @@ public class MainWindow : Gtk.ApplicationWindow {
                        () => { on_bar_delete (); return true; });
         accel.connect (Gdk.Key.Return, 0, Gtk.AccelFlags.VISIBLE,
                        () => { on_primary_action (); return true; });
+        accel.connect (Gdk.Key.Escape, 0, Gtk.AccelFlags.VISIBLE,
+                       () => { infobar.hide (); return true; });
     }
 
     private void connect_signals () {
@@ -709,6 +834,7 @@ public class MainWindow : Gtk.ApplicationWindow {
             spinner.hide ();
             refresh_btn.set_sensitive (true);
             rebuild_dir_chips ();
+            update_empty_state ();
             update_subtitle ();
             check_infobar ();
             update_selection_ui ();
@@ -727,7 +853,7 @@ public class MainWindow : Gtk.ApplicationWindow {
             model.append (out it);
             model.set (it,
                 Col.CHECK, false,
-                Col.ICON, e.get_thumbnail (40),
+                Col.ICON, e.get_thumbnail (40) ?? placeholder_icon (40),
                 Col.NAME, e.get_best_name (),
                 Col.SIZE, AppPath.format_size (e.size),
                 Col.PILL, make_pill (e),
@@ -738,6 +864,52 @@ public class MainWindow : Gtk.ApplicationWindow {
         filter.refilter ();
         update_selection_ui ();
     }
+
+    /** 没有图标时的占位图：一个淡色圆角方块 */
+    private Gdk.Pixbuf? placeholder_icon (int size) {
+        if (placeholder_cache != null)
+            return placeholder_cache;
+
+        var pb = new Gdk.Pixbuf (Gdk.Colorspace.RGB, true, 8, size, size);
+        pb.fill (0x00000000);
+
+        var surface = new Cairo.ImageSurface (Cairo.Format.ARGB32, size, size);
+        var cr = new Cairo.Context (surface);
+        cr.set_antialias (Cairo.Antialias.BEST);
+
+        double r = 6.0;
+        double m = 5.5;
+        double w = size - 2 * m;
+        cr.new_sub_path ();
+        cr.arc (m + w - r, m + r,     r, -Math.PI / 2, 0);
+        cr.arc (m + w - r, m + w - r, r, 0, Math.PI / 2);
+        cr.arc (m + r,     m + w - r, r, Math.PI / 2, Math.PI);
+        cr.arc (m + r,     m + r,     r, Math.PI, 3 * Math.PI / 2);
+        cr.close_path ();
+
+        // 用当前主题的弱化前景色，深浅主题都成立
+        cr.set_source_rgba (0.55, 0.58, 0.62, 0.16);
+        cr.fill_preserve ();
+        cr.set_source_rgba (0.55, 0.58, 0.62, 0.38);
+        cr.set_line_width (1.0);
+        cr.stroke ();
+
+        // 中间一个淡淡的「应用」轮廓
+        cr.set_source_rgba (0.55, 0.58, 0.62, 0.42);
+        cr.set_line_width (1.6);
+        double cx = size / 2.0, cy = size / 2.0;
+        double bw = size * 0.30, bh = size * 0.22;
+        cr.rectangle (cx - bw / 2, cy - bh / 2, bw, bh);
+        cr.stroke ();
+
+        var out = Gdk.pixbuf_get_from_surface (surface, 0, 0, size, size);
+        if (out == null)
+            return null;
+        placeholder_cache = out;
+        return placeholder_cache;
+    }
+
+    private Gdk.Pixbuf? placeholder_cache = null;
 
     private Gdk.Pixbuf? make_pill (AppEntry e) {
         string text = e.get_status_text ();
@@ -1685,6 +1857,69 @@ public class MainWindow : Gtk.ApplicationWindow {
         }
     }
 
+    // ══════════════════════════════════════════════════════════════
+    //  公开接口：供菜单栏调用
+    // ══════════════════════════════════════════════════════════════
+
+    public void menu_refresh ()            { refresh (); }
+    public void menu_add_dir ()            { on_add_dir (); }
+    public void menu_open_apps_dir ()      { open_in_file_manager (AppPath.applications_dir ()); }
+    public void menu_open_config_dir ()    { open_in_file_manager (AppPath.config_dir ()); }
+    public void menu_quit ()               { destroy (); }
+
+    public void menu_select_all (bool on)  { set_all_checked (on); }
+
+    public void menu_create ()             { on_bar_create (); }
+    public void menu_repair ()             { on_bar_repair (); }
+    public void menu_claim ()              { on_bar_claim (); }
+    public void menu_delete ()             { on_bar_delete (); }
+
+    public void menu_health ()             { on_menu_health (); }
+    public void menu_history ()            { on_menu_history (); }
+    public void menu_cleanup ()            { on_menu_cleanup (); }
+    public void menu_settings ()           { on_menu_settings (); }
+
+    public void menu_set_filter (int mode) {
+        if (filter_combo.get_active () != mode)
+            filter_combo.set_active (mode);
+    }
+
+    public void menu_set_fullscreen (bool on) {
+        if (on)
+            fullscreen ();
+        else
+            unfullscreen ();
+    }
+
+    public void menu_about () { on_menu_about (); }
+
+    public void menu_extract_metadata () {
+        show_msg ("「从 AppImage 提取内置元数据」已移到创建对话框里：\n"
+                  + "选中条目 → ⚡ 创建（或右键 → 创建启动器），"
+                  + "在对话框里点同名的按钮即可。");
+    }
+
+    public void menu_shortcuts () {
+        var dlg = new Gtk.MessageDialog (this, Gtk.DialogFlags.MODAL,
+            Gtk.MessageType.INFO, Gtk.ButtonsType.CLOSE, "键盘快捷键");
+        dlg.format_secondary_text (
+            "Ctrl+R / F5   重新扫描\n"
+            + "Ctrl+A        全选\n"
+            + "Ctrl+F        聚焦搜索框\n"
+            + "Ctrl+N        创建启动器\n"
+            + "Ctrl+D        添加扫描目录\n"
+            + "Ctrl+,        设置\n"
+            + "Ctrl+Q        退出\n"
+            + "F11           全屏\n"
+            + "Delete        删除选中的启动器\n"
+            + "Enter         创建 / 认领 / 编辑（按当前状态）\n"
+            + "Esc           关闭提示条\n"
+            + "双击条目      未创建 → 创建；已创建 → 编辑\n"
+            + "右键条目      打开完整操作菜单");
+        dlg.run ();
+        dlg.destroy ();
+    }
+
     /** GenericArray 在这套 vapi 里没有 contains */
     private static bool has_str (GenericArray<string> a, string want) {
         unowned string[] raw = (string[]) a.data;
@@ -1692,12 +1927,5 @@ public class MainWindow : Gtk.ApplicationWindow {
             if (raw[i] == want)
                 return true;
         return false;
-    }
-
-    /** 首次运行钩子：由 main.vala 调用 */
-    public void maybe_show_wizard () {
-        if (config.is_configured ())
-            return;
-        refresh ();
     }
 }

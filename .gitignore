@@ -17,3 +17,6 @@ src/*.d
 .DS_Store
 Thumbs.db
 
+
+# 解包残留的兜底防护（正常不该出现，见 appimage.vala 的 set_cwd）
+squashfs-root/

@@ -133,11 +133,27 @@
     border-radius: 6px;
 }
 
-/* ── 顶栏 ───────────────────────────────────────────────────────────────── */
+/* ── 菜单栏 ─────────────────────────────────────────────────────────────── */
 
-.app-header {
+menubar {
+    padding: 1px 4px;
+    border-bottom: 1px solid alpha(@borders, 0.45);
+}
+
+menubar > menuitem {
+    padding: 3px 9px;
+    border-radius: 4px;
+}
+
+menubar > menuitem:hover {
+    background-color: alpha(@accent_bg_color, 0.20);
+}
+
+/* ── 工具栏 ─────────────────────────────────────────────────────────────── */
+
+.app-toolbar {
     padding: 6px 10px;
-    border-bottom: 1px solid alpha(@borders, 0.50);
+    border-bottom: 1px solid alpha(@borders, 0.45);
 }
 
 .app-subtitle {
@@ -155,10 +171,49 @@
     border-bottom: 1px solid alpha(@borders, 0.35);
 }
 
+/* ── 空状态引导页 ───────────────────────────────────────────────────────── */
+
+.empty-icon {
+    opacity: 0.45;
+    margin-bottom: 4px;
+}
+
+/* 常见位置 / 设置项里的选项卡片 */
+.option-card {
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid alpha(@borders, 0.45);
+    background-color: alpha(@theme_bg_color, 0.35);
+}
+
+.option-card:hover {
+    border-color: alpha(@accent_bg_color, 0.55);
+    background-color: alpha(@accent_bg_color, 0.07);
+}
+
 /* ── 主列表 ─────────────────────────────────────────────────────────────── */
 
 treeview.view.app-list {
     border-bottom: none;
+}
+
+/* 交替行底色，长列表更好读 */
+treeview.view.app-list:nth-child(even) {
+    background-color: alpha(@theme_fg_color, 0.028);
+}
+
+/* 表头：加粗 + 下边框 */
+treeview.view.app-list header button {
+    font-weight: bold;
+    padding: 6px 8px;
+    border-bottom: 1px solid alpha(@borders, 0.55);
+    background-image: none;
+    background-color: alpha(@theme_bg_color, 0.55);
+}
+
+/* 悬停高亮 */
+treeview.view.app-list:hover {
+    background-color: alpha(@accent_bg_color, 0.08);
 }
 
 treeview.view.app-list:selected,
@@ -385,6 +440,28 @@ progressbar progress {
 .history-undone {
     text-decoration: line-through;
     color: @insensitive_fg_color;
+}
+
+/* ── 滚动条：细一点，悬停变宽 ─────────────────────────────────────────── */
+
+scrollbar slider {
+    min-width: 6px;
+    min-height: 6px;
+    border-radius: 3px;
+    background-color: alpha(@theme_fg_color, 0.22);
+}
+
+scrollbar slider:hover {
+    background-color: alpha(@theme_fg_color, 0.40);
+}
+
+scrollbar.horizontal slider {
+    min-height: 6px;
+}
+
+/* 窄窗口下过滤+操作条那一行的横向滚动条要更细 */
+scrolledwindow.filter-scroll scrollbar {
+    min-height: 4px;
 }
 
 /* ── 通用辅助 ───────────────────────────────────────────────────────────── */

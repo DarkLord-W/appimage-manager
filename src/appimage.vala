@@ -57,12 +57,122 @@ namespace AppImageExtract {
 
     private static int64 counter = 0;
 
+    /** 解包默认硬超时（秒） */
+    public const int DEFAULT_EXTRACT_TIMEOUT_SEC = 20;
+
+    /**
+     * 运行子进程并等待结束，带硬超时。
+     *
+     * 返回真实退出码；启动失败 / 超时 / 取消均返回 -1，超时时 *timed_out 置 true。
+     *
+     * 注意：wait() 会阻塞「调用线程」，所以调用方应在工作线程里调用。
+     * 超时用 GLib.Timeout.add 挂在默认主循环上（g_timeout_add）：
+     * 工作线程调用时由主循环派发，到点 force_exit()（SIGKILL）保证 wait()
+     * 一定会返回；从主线程调用时 wait() 会把主循环卡住，定时器无法派发
+     * （见 test_launch 的注释）。
+     */
+    /**
+     * 跑一个子进程，带硬超时。
+     *
+     * @param cwd 子进程的工作目录。**必须显式指定**：
+     *            `--appimage-extract` 是把内容解到「当前目录」的，
+     *            不设的话会落到本程序被启动时的目录里 —— 实测有
+     *            用户因此被写进 2.1 GB 的解包残留。
+     */
+    public static int run_process (string[] argv, int timeout_sec,
+                                   GLib.Cancellable? cancel,
+                                   out bool timed_out,
+                                   string? cwd = null) {
+        timed_out = false;
+
+        if (cancel != null && cancel.is_cancelled ())
+            return -1;
+
+        GLib.Subprocess proc;
+        try {
+            // 静音输出：不接管道，避免子进程写满管道缓冲后双方死锁
+            var flags = GLib.SubprocessFlags.STDOUT_SILENCE
+                      | GLib.SubprocessFlags.STDERR_SILENCE;
+            if (cwd != null) {
+                var launcher = new GLib.SubprocessLauncher (flags);
+                launcher.set_cwd (cwd);
+                proc = launcher.spawnv (argv);
+            } else {
+                proc = new GLib.Subprocess.newv (argv, flags);
+            }
+        } catch (GLib.Error e) {
+            return -1;
+        }
+
+        bool killed = false;
+        uint timeout_id = 0;
+        if (timeout_sec > 0) {
+            timeout_id = GLib.Timeout.add ((uint) timeout_sec * 1000, () => {
+                killed = true;
+                proc.force_exit ();
+                return false;
+            });
+        }
+
+        bool waited = false;
+        try {
+            waited = proc.wait (cancel);
+        } catch (GLib.Error e) {
+            waited = false;
+        }
+
+        // 超时源若已触发，回调返回后它已自行销毁，再 remove 会告警
+        if (timeout_id != 0 && !killed)
+            GLib.Source.remove (timeout_id);
+
+        if (!waited) {
+            // 被取消（或 wait 失败）：确保子进程已死再返回
+            proc.force_exit ();
+            return -1;
+        }
+
+        if (killed) {
+            timed_out = true;
+            return -1;
+        }
+
+        if (!proc.get_if_exited ())
+            return -1;   // 被信号杀死，没有正常退出码
+
+        return proc.get_exit_status ();
+    }
+
+    /**
+     * 读取 AppImage 头，返回格式版本字节。
+     *
+     * 校验偏移 8/9 是否为 "AI"（AppImage 规范魔数）；
+     * 魔数不符或读不出来返回 -1。
+     */
+    private static int read_appimage_version (string path) {
+        try {
+            var stream = GLib.File.new_for_path (path).read (null);
+            var bytes = stream.read_bytes (11, null);
+            stream.close (null);
+            if (bytes.get_size () < 11)
+                return -1;
+            if (bytes.get (8) != (uint8) 'A' || bytes.get (9) != (uint8) 'I')
+                return -1;
+            return bytes.get (10);
+        } catch {
+            return -1;
+        }
+    }
+
     /**
      * 解包 AppImage 并解析元数据。
      *
      * @param work_dir 临时工作区（每项独立子目录，避免并发冲突）
+     * @param cancel   可选取消令牌，worker 线程用它响应界面取消
+     * @param timeout_sec 解包硬超时（秒），超时强杀子进程
      */
-    public static AppImageInfo run (string path, string work_dir) {
+    public static AppImageInfo run (string path, string work_dir,
+                                    GLib.Cancellable? cancel = null,
+                                    int timeout_sec = DEFAULT_EXTRACT_TIMEOUT_SEC) {
         var info = new AppImageInfo (path);
 
         if (!GLib.FileUtils.test (path, GLib.FileTest.EXISTS)) {
@@ -70,26 +180,43 @@ namespace AppImageExtract {
             return info;
         }
 
-        // AppImage 的 --appimage-extract 需要执行权限
+        // 不做静默 chmod：不修改用户文件，权限问题交由调用方询问用户
         if (!AppPath.is_executable (path)) {
-            AppPath.file_chmod_exec (path);
+            info.error = "文件没有执行权限";
+            return info;
+        }
+
+        // 先验 AppImage 头，绝不把 --appimage-extract 交给普通程序：
+        // 老式 / 自制运行时会把它当普通参数，把真正的 GUI 拉起来且永不退出。
+        int fmt = read_appimage_version (path);
+        if (fmt != 1 && fmt != 2) {
+            if (fmt >= 0)
+                info.error = "不是标准 AppImage 格式（版本字节 %d），不支持解包".printf (fmt);
+            else
+                info.error = "不是标准 AppImage 格式，不支持解包";
+            return info;
         }
 
         GLib.DirUtils.create_with_parents (work_dir, 0700);
         string extract_dir = GLib.Path.build_filename (work_dir, "squashfs-root");
 
-        int status = 0;
-        try {
-            // --appimage-extract 把内容解到当前工作目录
-            GLib.Process.spawn_sync (
-                null,
-                { path, "--appimage-extract" },
-                null,
-                GLib.SpawnFlags.STDOUT_TO_DEV_NULL
-                 | GLib.SpawnFlags.STDERR_TO_DEV_NULL,
-                null, null, null, out status);
-        } catch (GLib.Error e) {
-            info.error = "执行失败: %s".printf (e.message);
+        bool timed_out = false;
+        // --appimage-extract 把内容解到当前工作目录
+        // 关键：cwd 必须是 work_dir。--appimage-extract 把内容解到
+        // 「当前目录」，不指定的话会写进本程序被启动时的目录 ——
+        // 实测有用户因此被写进 2.1 GB 的解包残留。
+        int status = run_process ({ path, "--appimage-extract" },
+                                  timeout_sec, cancel, out timed_out, work_dir);
+
+        if (timed_out) {
+            AppImageInfo.rm_rf (work_dir);
+            info.error = "解包超时（%d 秒）。可能是旧格式或自定义运行时，已强制终止。".printf (timeout_sec);
+            return info;
+        }
+
+        if (cancel != null && cancel.is_cancelled ()) {
+            AppImageInfo.rm_rf (work_dir);
+            info.error = "已取消";
             return info;
         }
 
@@ -337,12 +464,17 @@ namespace AppImageExtract {
         public string message = "";
 
         public int64 elapsed_ms = 0;
+        public bool timed_out = false;
     }
 
     /**
      * 测试启动 AppImage。
      * 成功与否很难从退出码判断（多数 GUI 应用会 fork 后父进程立即退出），
      * 所以策略是：短时间无致命报错即视为成功。
+     *
+     * 注意：本函数目前从主线程调用，run_process 的 wait() 会阻塞界面。
+     * 超时源挂在默认主循环上，主线程被 wait() 卡住时不会派发，
+     * 因此最坏情况仍会一直阻塞。暂时接受，之后应把本函数挪到工作线程。
      */
     public static LaunchResult test_launch (string path, int timeout_ms) {
         var res = new LaunchResult ();
@@ -352,25 +484,28 @@ namespace AppImageExtract {
             return res;
         }
 
+        int timeout_sec = timeout_ms > 0 ? (timeout_ms + 999) / 1000 : 10;
+
         int64 start = GLib.get_monotonic_time ();
-        int status = -1;
-        try {
-            var proc = new GLib.Subprocess.newv ({ path },
-                GLib.SubprocessFlags.STDOUT_PIPE | GLib.SubprocessFlags.STDERR_PIPE);
-            string sout, serr;
-            proc.communicate_utf8 (null, null, out sout, out serr);
-            res.stdout = sout ?? "";
-            res.stderr = serr ?? "";
-            status = proc.get_exit_status ();
-        } catch (GLib.Error e) {
-            res.message = "执行失败: %s".printf (e.message);
+        bool timed_out = false;
+        int status = run_process ({ path }, timeout_sec, null, out timed_out);
+        res.elapsed_ms = (GLib.get_monotonic_time () - start) / 1000;
+
+        if (timed_out) {
+            res.timed_out = true;
+            res.exit_code = -1;
+            res.message = "启动测试超时（%d 秒），已终止".printf (timeout_sec);
             return res;
         }
 
-        res.elapsed_ms = (GLib.get_monotonic_time () - start) / 1000;
+        if (status < 0) {
+            res.message = "执行失败（进程未启动或被信号终止）";
+            return res;
+        }
+
         res.exit_code = status;
 
-        string err = (res.stderr ?? "").strip ();
+        string err = res.stderr.strip ();
         // 非 0 退出且有 stderr 输出才算失败
         if (status != 0 && err != "") {
             res.success = false;

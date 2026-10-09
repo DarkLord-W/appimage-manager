@@ -60,7 +60,7 @@ run: $(BIN)
 # 直接编译引擎的 .vala 源（排除 GUI 入口与对话框），
 # 这样引擎的正确性可以脱离界面单独验证。
 ENGINE_VALA := $(filter-out src/main.vala src/window.vala src/dialogs.vala \
-                               src/wizard.vala,$(SOURCES))
+                               src/menubar.vala src/wizard.vala,$(SOURCES))
 SELFTEST_BIN := appimage-manager-selftest
 
 $(SELFTEST_BIN): tests/selftest.vala $(ENGINE_VALA)

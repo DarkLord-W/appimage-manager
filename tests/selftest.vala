@@ -477,6 +477,59 @@ public int main (string[] args) {
         }
     }
 
+    /* ══ 11. 子进程：硬超时 + 工作目录 ══════════════════════════
+     *
+     * 这两条都是实测事故换来的：
+     *   - 没有超时 → 不认识 --appimage-extract 的运行时会把参数透传给
+     *     真正的应用，spawn_sync 永久阻塞，界面卡死且关不掉
+     *   - 没有 set_cwd → 解包内容写进程序启动目录，实测 2.1 GB
+     * ══════════════════════════════════════════════════════════════ */
+    stdout.printf ("\n── 11. 子进程：超时与工作目录 ─────────────\n");
+
+    // run_process 的超时靠 GLib.Timeout 触发，需要一个跑着的主循环
+    var loop = new GLib.MainLoop ();
+    var ml_thread = new GLib.Thread<void*> ("mainloop", () => {
+        loop.run ();
+        return null;
+    });
+
+    // ── 超时：sleep 60 应该被 ~2 秒强制终止 ──
+    int64 t0 = GLib.get_monotonic_time ();
+    bool to_flag = false;
+    int rc = AppImageExtract.run_process ({ "/bin/sleep", "60" }, 2, null,
+                                          out to_flag, null);
+    int64 elapsed_ms = (GLib.get_monotonic_time () - t0) / 1000;
+
+    check (ref checks, ref failures, "超时标志被置起", to_flag,
+           "未被判定为超时");
+    check (ref checks, ref failures, "超时在 2~6 秒内触发（未等满 60 秒）",
+           elapsed_ms >= 1800 && elapsed_ms <= 6000,
+           "实测 %lld 毫秒".printf (elapsed_ms));
+    check (ref checks, ref failures, "超时后返回失败码", rc != 0,
+           "rc=%d".printf (rc));
+
+    // ── 工作目录：子进程必须在指定的 cwd 里干活 ──
+    string cwd_test = GLib.Path.build_filename (sandbox, "cwdtest");
+    AppPath.ensure_dir (cwd_test);
+    string marker = GLib.Path.build_filename (cwd_test, "marker.txt");
+    AppPath.file_remove (marker);
+
+    bool to2 = false;
+    AppImageExtract.run_process (
+        { "/bin/sh", "-c", "touch marker.txt" }, 5, null, out to2, cwd_test);
+
+    check (ref checks, ref failures, "子进程在指定的工作目录里产生了文件",
+           AppPath.exists (marker),
+           "没在 %s 下找到 marker.txt".printf (cwd_test));
+
+    // CWD 里不该出现（这正是 2.1 GB 事故的形态）
+    string stray = "squashfs-root";
+    check (ref checks, ref failures, "项目目录里没有解包残留",
+           !AppPath.is_dir (stray),
+           "存在 %s —— 说明工作目录没设对".printf (stray));
+
+    loop.quit ();
+
     /* ══ 汇总 ════════════════════════════════════════════════════ */
     stdout.printf ("\n═══════════════════════════════════════════\n");
     if (failures == 0) {
