@@ -579,6 +579,120 @@ namespace Repair {
         return ends_with_newline ? joined + "\n" : joined;
     }
 
+    /**
+     * 认领时的最小改写。
+     *
+     * 与 append_markers 同源：只动需要改的那两行（Exec / TryExec），
+     * 其余行 —— 注释、空行、原始写法、[Desktop Action ...] 等附加组 ——
+     * 逐字节保留。最后在 [Desktop Entry] 组末尾追加标记键。
+     *
+     * 之前认领走的是「逐行重建」，即使只改一个 Exec 也会把注释、空行、
+     * 附加组全部吃掉，与对话框上「原有内容保留」的说法不符。
+     *
+     * @param rewrite_exec true = 把 Exec 重写成本 AppImage 的规范形式
+     * @param ensure_tryexec true = 顺带补一行 TryExec（已有则只更新值）
+     */
+    public static string claim_rewrite (string original,
+                                        string appimage_path,
+                                        bool rewrite_exec,
+                                        bool ensure_tryexec) {
+        bool ends_nl = original.has_suffix ("\n");
+        var src = new GenericArray<string> ();
+        foreach (string l in original.split ("\n"))
+            src.add (l);
+        if (ends_nl && src.length > 0 && src[src.length - 1] == "")
+            src.remove_index (src.length - 1);
+
+        // [Desktop Entry] 组的范围（半开区间）
+        int de_start = -1;
+        for (uint i = 0; i < src.length; i++) {
+            if (src[i].strip () == "[Desktop Entry]") {
+                de_start = (int) i;
+                break;
+            }
+        }
+        int de_end = (int) src.length;
+        if (de_start >= 0) {
+            for (uint i = (uint) de_start + 1; i < src.length; i++) {
+                if (src[i].strip ().has_prefix ("[")) {
+                    de_end = (int) i;
+                    break;
+                }
+            }
+        }
+
+        string new_exec = DesktopFiles.build_exec_arg (appimage_path) + " %U";
+        bool saw_tryexec = false;
+
+        // 逐行处理，放进结果数组
+        var out_lines = new GenericArray<string> ();
+        for (int i = 0; i < src.length; i++) {
+            string line = src[i];
+
+            if (de_start < 0 || i < de_start || i >= de_end) {
+                out_lines.add (line);      // 组外：文件头注释、其它组 → 原样
+                continue;
+            }
+
+            string t = line.strip ();
+            if (t == "" || t.has_prefix ("#")) {
+                out_lines.add (line);      // 空行、注释 → 原样
+                continue;
+            }
+
+            int eq = t.index_of_char ('=');
+            if (eq <= 0) {
+                out_lines.add (line);
+                continue;
+            }
+
+            string key = t.substring (0, eq).strip ();
+
+            // 旧的标记键一律丢弃，稍后统一追加，保证幂等
+            if (key == DesktopFiles.MARKER_BOOL
+             || key == DesktopFiles.MARKER_PATH
+             || key == DesktopFiles.MARKER_VERSION)
+                continue;
+
+            if (key == "Exec" && rewrite_exec) {
+                out_lines.add ("Exec=" + new_exec);
+                continue;
+            }
+
+            if (key == "TryExec" && ensure_tryexec) {
+                saw_tryexec = true;
+                out_lines.add ("TryExec=" + appimage_path);
+                continue;
+            }
+
+            out_lines.add (line);
+        }
+
+        // 找 [Desktop Entry] 组在结果里的结尾：下一个组头，或末尾；
+        // 组尾的空行要留在标记之后，继续充当与下一组的分隔。
+        int insert_at = (int) out_lines.length;
+        for (uint i = 0; i < out_lines.length; i++) {
+            if (out_lines[i].strip ().has_prefix ("[")
+                && out_lines[i].strip () != "[Desktop Entry]") {
+                insert_at = (int) i;
+                break;
+            }
+        }
+        while (insert_at > 0 && out_lines[insert_at - 1].strip () == "")
+            insert_at--;
+
+        // 从后往前插，保持顺序
+        out_lines.insert (insert_at, DesktopFiles.MARKER_VERSION
+                                     + "=" + APPMGR_VERSION);
+        out_lines.insert (insert_at, DesktopFiles.MARKER_PATH + "=" + appimage_path);
+        out_lines.insert (insert_at, DesktopFiles.MARKER_BOOL + "=true");
+        if (ensure_tryexec && !saw_tryexec)
+            out_lines.insert (insert_at, "TryExec=" + appimage_path);
+
+        string result = string.joinv ("\n", out_lines.steal ());
+        return ends_nl ? result + "\n" : result;
+    }
+
     /* ── 差异生成 ────────────────────────────────────────────────── */
 
     /**

@@ -698,19 +698,35 @@ namespace Dialogs {
      * ══════════════════════════════════════════════════════════════ */
 
     private Gtk.RadioButton mk_radio (Gtk.RadioButton? group, string text, string? sub) {
+        if (sub == null)
+            return new Gtk.RadioButton.with_label_from_widget (group, text);
+
+        // 注意：with_label_from_widget 已经把 GtkLabel 装成子控件了。
+        // 要改成「标题 + 说明」两行结构，必须先把那个 label 摘下来 ——
+        //  · 直接往按钮里 add 会撞上「child 已有 parent」的断言
+        //  · 把 get_child() 当 GtkBox 用更糟：它是 GtkLabel，强转会得到
+        //    无效指针，随后 remove/add 就是在操作垃圾内存
+        // （这里踩过：一打开修复对话框就刷 invalid cast from
+        //   'GtkLabel' to 'GtkBox' 的 CRITICAL。）
         var rb = new Gtk.RadioButton.with_label_from_widget (group, text);
-        if (sub != null) {
-            rb.tooltip_text = sub;
-            var box = (Gtk.Box) rb.get_child ();
-            var v = new Gtk.Box (Gtk.Orientation.VERTICAL, 0);
-            v.pack_start (box, false, false, 0);
-            var d = mk_label (sub, 0.0f);
-            d.get_style_context ().add_class ("dim-label");
-            d.set_margin_start (26);
-            v.pack_start (d, false, false, 0);
-            rb.remove (box);
-            rb.add (v);
-        }
+        rb.tooltip_text = sub;
+
+        unowned Gtk.Widget? old = rb.get_child ();
+        if (old != null)
+            rb.remove (old);
+
+        var v = new Gtk.Box (Gtk.Orientation.VERTICAL, 0);
+
+        var t = new Gtk.Label (text);
+        t.xalign = 0.0f;
+        v.pack_start (t, false, false, 0);
+
+        var d = mk_label (sub, 0.0f);
+        d.get_style_context ().add_class ("dim-label");
+        d.set_margin_start (26);
+        v.pack_start (d, false, false, 0);
+
+        rb.add (v);
         return rb;
     }
 
@@ -1496,7 +1512,11 @@ namespace Dialogs {
 
         var c_escape = new Gtk.CheckButton.with_label ("修正 Exec 转义");
         c_escape.tooltip_text = "把路径写成带引号并转义的合法 Exec 参数";
-        c_escape.active = true;
+        // 只在 Exec 确实不规范时才默认勾选。勾着它就会走「改写」路径 ——
+        // 虽然现在也只动 Exec / TryExec 两行，但默认路径保持纯认领更稳妥：
+        // 用户点「认领」的预期就是「什么都别动，接管一下就行」。
+        c_escape.active = (d.exec_line != ""
+                           && d.exec_line != DesktopFiles.build_exec_arg (entry.path) + " %U");
 
         var c_direct = new Gtk.CheckButton.with_label ("改为直接指向 AppImage 本体");
         c_direct.tooltip_text = "去掉 sh -c 之类的包装脚本层";
@@ -1607,6 +1627,368 @@ namespace Dialogs {
         return result;
     }
 
+    /**
+     * 「认领」的兜底入口：当没有可自动认领的条目时调用。
+     *
+     * 先把「认领」到底做什么解释清楚，再列出当前扫描到的 .desktop
+     * 各自属于哪一类，最后给一个「手动选择一个 .desktop 文件…」的出口
+     * —— 用户带着一个自写的启动器过来时，不必先想办法让工具认出它。
+     */
+    public void claim_manual (Gtk.Window parent, Store store, AppConfig cfg) {
+        string apps_dir = AppPath.applications_dir ();
+        var all = DesktopFiles.scan_directory (apps_dir);
+
+        var dlg = new_dialog (parent, "认领启动器", 720, 560);
+        Gtk.Box content = dlg.get_content_area ();
+        content.set_border_width (12);
+        content.set_spacing (10);
+
+        var intro = mk_label (
+            "认领 = 把「已经存在但不是本工具创建」的 .desktop 纳入管理。接管后可以获得：\n"
+            + "  · 修复（规范检查 + 一键修正）\n"
+            + "  · 失效检测（AppImage 丢失时会提示）\n"
+            + "  · 图标管理");
+        intro.set_line_wrap (true);
+        content.pack_start (intro, false, false, 0);
+
+        content.pack_start (new Gtk.Separator (Gtk.Orientation.HORIZONTAL),
+                            false, false, 0);
+
+        var count = mk_label ("本次扫描：%s 里共 %d 个 .desktop"
+                              .printf (apps_dir, all.length));
+        count.get_style_context ().add_class ("dim-label");
+        count.set_line_wrap (true);
+        content.pack_start (count, false, false, 0);
+
+        // 逐条列出归类，最多 8 行，其余折叠成「以及另外 N 个」
+        var list_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 3);
+        int shown = 0;
+        foreach (var d in all) {
+            if (shown >= 8)
+                break;
+
+            var row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8);
+
+            var bullet = new Gtk.Label ("·");
+            bullet.get_style_context ().add_class ("dim-label");
+            row.pack_start (bullet, false, false, 0);
+
+            var nm = new Gtk.Label (d.basename);
+            nm.set_xalign (0.0f);
+            nm.set_ellipsize (Pango.EllipsizeMode.MIDDLE);
+            row.pack_start (nm, true, true, 0);
+
+            string status;
+            if (d.is_managed)
+                status = "已在本工具管理之下";
+            else if (d.exec_target != null && AppPath.exists (d.exec_target))
+                status = "指向 %s".printf (AppPath.shorten (d.exec_target));
+            else
+                status = "与任何 AppImage 无关";
+
+            var st = new Gtk.Label (status);
+            st.get_style_context ().add_class ("dim-label");
+            st.set_ellipsize (Pango.EllipsizeMode.MIDDLE);
+            row.pack_start (st, false, false, 0);
+
+            list_box.pack_start (row, false, false, 0);
+            shown++;
+        }
+        content.pack_start (list_box, false, false, 0);
+
+        int rest = all.length - shown;
+        if (rest > 0) {
+            var more = mk_label ("…以及另外 %d 个".printf (rest));
+            more.get_style_context ().add_class ("dim-label");
+            content.pack_start (more, false, false, 0);
+        }
+
+        content.pack_start (new Gtk.Separator (Gtk.Orientation.HORIZONTAL),
+                            false, false, 0);
+
+        var none = mk_label ("没有找到可以自动认领的条目。");
+        none.get_style_context ().add_class ("warning");
+        content.pack_start (none, false, false, 0);
+
+        int RESP_PICK_FILE = 9401;
+        var pick_btn = add_button (dlg, "手动选择一个 .desktop 文件…",
+                                   RESP_PICK_FILE);
+        if (pick_btn != null)
+            pick_btn.set_tooltip_text (
+                "从磁盘上挑一个 .desktop，把它关联的 AppImage 纳入管理");
+        add_button (dlg, "关闭", Gtk.ResponseType.CLOSE);
+        dlg.set_default_response (Gtk.ResponseType.CLOSE);
+
+        dlg.show_all ();
+        int resp = dlg.run ();
+        dlg.destroy ();
+
+        if (resp == RESP_PICK_FILE)
+            claim_pick_file (parent, store, cfg);
+    }
+
+    /**
+     * 认领流程：让用户手动挑一个 .desktop，并把它关联到某个 AppImage。
+     *
+     * 与 claim_entry 的关系：本函数只负责「找到要认领的文件」和
+     * 「它对应哪个 AppImage」，真正的认领对话框与执行都由 claim_entry 完成。
+     */
+    public void claim_pick_file (Gtk.Window parent, Store store, AppConfig cfg) {
+        string apps_dir = AppPath.applications_dir ();
+
+        // ── 1. 选择 .desktop 文件 ────────────────────────────────
+        var chooser = new Gtk.FileChooserDialog (
+            "选择要认领的 .desktop 文件", parent, Gtk.FileChooserAction.OPEN,
+            "取消", Gtk.ResponseType.CANCEL,
+            "选择", Gtk.ResponseType.ACCEPT);
+        chooser.set_modal (true);
+        chooser.set_current_folder (apps_dir);
+
+        var desktop_filter = new Gtk.FileFilter ();
+        desktop_filter.set_name ("桌面启动器 (*.desktop)");
+        desktop_filter.add_pattern ("*.desktop");
+        desktop_filter.add_mime_type ("application/x-desktop");
+        chooser.add_filter (desktop_filter);
+        chooser.set_filter (desktop_filter);
+
+        var all_filter = new Gtk.FileFilter ();
+        all_filter.set_name ("所有文件");
+        all_filter.add_pattern ("*");
+        chooser.add_filter (all_filter);
+
+        string? picked = null;
+        if (chooser.run () == Gtk.ResponseType.ACCEPT)
+            picked = chooser.get_filename ();
+        chooser.destroy ();
+        if (picked == null || picked == "")
+            return;
+
+        bool in_place = false;
+
+        // ── 3. 不在启动器目录：复制 / 原地 / 取消 ────────────────
+        if (AppPath.canonical (GLib.Path.get_dirname (picked))
+            != AppPath.canonical (apps_dir)) {
+            int RESP_COPY = 9201;
+            int RESP_INPLACE = 9202;
+
+            var dlg = new Gtk.MessageDialog (parent, Gtk.DialogFlags.MODAL,
+                Gtk.MessageType.QUESTION, Gtk.ButtonsType.NONE,
+                "这个文件不在启动器目录里");
+            dlg.format_secondary_text (
+                "%s\n\n本工具只扫描 %s，放在别处的话下次扫描就找不到它了。"
+                .printf (AppPath.shorten (picked), AppPath.shorten (apps_dir)));
+            dlg.add_button ("复制到启动器目录并认领", RESP_COPY);
+            dlg.add_button ("原地认领", RESP_INPLACE);
+            dlg.add_button ("取消", Gtk.ResponseType.CANCEL);
+            dlg.set_default_response (RESP_COPY);
+            int r = dlg.run ();
+            dlg.destroy ();
+
+            if (r == RESP_COPY) {
+                string? dest = copy_into_launcher_dir (picked);
+                if (dest == null) {
+                    info (parent, "复制失败",
+                        "无法把 %s 复制到 %s。".printf (
+                            AppPath.shorten (picked),
+                            AppPath.shorten (apps_dir)),
+                        Gtk.MessageType.ERROR);
+                    return;
+                }
+                picked = dest;
+            } else if (r == RESP_INPLACE) {
+                in_place = true;
+            } else {
+                return;
+            }
+        }
+
+        // 复制过的话重新解析，让 Entry.file_path 指向新文件
+        var d = DesktopFiles.parse (picked);
+        if (d == null)
+            return;
+        if (!d.parse_ok) {
+            info (parent, "无法解析",
+                "%s 不是有效的 .desktop 文件：\n%s".printf (
+                    AppPath.shorten (picked), d.parse_error),
+                Gtk.MessageType.WARNING);
+            return;
+        }
+
+        // ── 4. 找出它指向的 AppImage ─────────────────────────────
+        string? target = d.exec_target;
+        AppEntry? matched = null;
+        if (target != null && target != "")
+            find_entry_by_path (store, target, out matched);
+
+        if (matched == null && target != null && target != ""
+            && AppPath.exists (target)) {
+            // 文件真实存在，只是不在扫描范围内 → 可以加目录，也可以挑
+            int RESP_ADD_DIR = 9301;
+            int RESP_PICK = 9302;
+
+            var dlg = new Gtk.MessageDialog (parent, Gtk.DialogFlags.MODAL,
+                Gtk.MessageType.QUESTION, Gtk.ButtonsType.NONE,
+                "这个 .desktop 指向的 AppImage 不在当前扫描范围内");
+            dlg.format_secondary_text ("%s".printf (target));
+            dlg.add_button ("把它所在目录加入扫描", RESP_ADD_DIR);
+            dlg.add_button ("从列表里挑一个…", RESP_PICK);
+            dlg.add_button ("取消", Gtk.ResponseType.CANCEL);
+            dlg.set_default_response (RESP_ADD_DIR);
+            int r = dlg.run ();
+            dlg.destroy ();
+
+            if (r == RESP_ADD_DIR) {
+                cfg.add_scan_dir (GLib.Path.get_dirname (target));
+                cfg.save ();
+                store.rescan ();
+                find_entry_by_path (store, target, out matched);
+                if (matched == null)
+                    info (parent, "仍未能匹配",
+                        "已把该目录加入扫描，但扫描结果里仍然没有这个 AppImage。\n"
+                        + "请从列表里手动指定。",
+                        Gtk.MessageType.WARNING);
+            } else if (r != RESP_PICK) {
+                return;
+            }
+        } else if (matched == null) {
+            // Exec 缺失，或指向的文件已经不存在 → 只能手动指定
+            string why = (target == null || target == "")
+                ? "Exec 为「（缺失）」"
+                : "Exec 指向的文件不存在：\n%s".printf (AppPath.shorten (target));
+            info (parent, "无法判断对应的 AppImage",
+                "无法从 Exec 判断它对应哪个 AppImage。\n%s\n\n请手动指定。"
+                .printf (why),
+                Gtk.MessageType.WARNING);
+        }
+
+        if (matched == null)
+            matched = pick_entry_for_claim (parent, store);
+        if (matched == null)
+            return;
+
+        // ── 5. 对齐 Exec 目标，让认领对话框显示正确信息 ──────────
+        if (d.exec_target != matched.path)
+            d.exec_target = matched.path;
+
+        var res = claim_entry (parent, matched, d, cfg);
+
+        if (in_place && res != null) {
+            info (parent, "提示",
+                "「%s」已认领，但它位于启动器目录之外：\n%s\n\n"
+                .printf (d.basename, AppPath.shorten (d.file_path))
+                + "本工具只扫描 %s，下次扫描不会列出它。\n"
+                  .printf (AppPath.shorten (apps_dir))
+                + "建议把它复制到启动器目录（或重新认领并选择「复制」）。",
+                Gtk.MessageType.INFO);
+        }
+    }
+
+    /** 在 store 里按规范化路径找 AppImage 条目 */
+    private bool find_entry_by_path (Store store, string path, out AppEntry? found) {
+        found = null;
+        string want = AppPath.canonical (path);
+        foreach (var e in store.entries) {
+            if (AppPath.canonical (e.path) == want) {
+                found = e;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 把文件复制进启动器目录，返回新路径；重名时自动加 -2、-3 …；失败返回 null */
+    private string? copy_into_launcher_dir (string path) {
+        string dir = AppPath.applications_dir ();
+        if (!AppPath.ensure_dir (dir))
+            return null;
+
+        var existing = DesktopFiles.scan_directory (dir);
+        string name = unique_copy_name (GLib.Path.get_basename (path), existing);
+        string dest = GLib.Path.build_filename (dir, name);
+
+        try {
+            // overwrite=false：绝不覆盖已有文件（名字已保证唯一）
+            AppPath.file_copy (path, dest, false);
+            return dest;
+        } catch {
+            return null;
+        }
+    }
+
+    /** 优先原名；重名时依次尝试 name-2.desktop … name-50.desktop */
+    private string unique_copy_name (string basename, DesktopFiles.Entry[] existing) {
+        if (!basename_in_use (basename, existing))
+            return basename;
+
+        string stem = basename;
+        if (stem.has_suffix (".desktop"))
+            stem = stem.substring (0, stem.length - ".desktop".length);
+
+        for (int i = 2; i <= 50; i++) {
+            string cand = "%s-%d.desktop".printf (stem, i);
+            if (!basename_in_use (cand, existing))
+                return cand;
+        }
+
+        // 兜底：slug + 路径哈希，保证不撞
+        string h = "%08x".printf (AppPath.canonical (basename).hash ());
+        return "%s-%s.desktop".printf (AppPath.slugify (stem), h);
+    }
+
+    private bool basename_in_use (string name, DesktopFiles.Entry[] existing) {
+        foreach (var e in existing)
+            if (e.basename == name)
+                return true;
+        return false;
+    }
+
+    /** 让用户从已扫描到的 AppImage 里手动挑一个 */
+    private AppEntry? pick_entry_for_claim (Gtk.Window parent, Store store) {
+        if (store.entries.length () == 0) {
+            info (parent, "没有可选的 AppImage",
+                "当前还没有扫描到任何 AppImage。\n"
+                + "请先添加扫描目录并重新扫描，然后再认领。",
+                Gtk.MessageType.WARNING);
+            return null;
+        }
+
+        var dlg = new_dialog (parent, "手动指定 AppImage", 640, 260);
+        Gtk.Box content = dlg.get_content_area ();
+        content.set_border_width (12);
+        content.set_spacing (10);
+
+        var lab = mk_label ("无法从 Exec 判断这个 .desktop 对应哪个 AppImage。\n"
+                            + "请手动指定：");
+        lab.set_line_wrap (true);
+        content.pack_start (lab, false, false, 0);
+
+        var combo = new Gtk.ComboBoxText ();
+        var list = new GenericArray<AppEntry> ();
+        foreach (var e in store.entries) {
+            combo.append_text ("%s  —  %s".printf (e.get_best_name (),
+                                                   AppPath.shorten (e.path)));
+            list.add (e);
+        }
+        combo.set_active (0);
+        content.pack_start (combo, false, false, 0);
+
+        add_button (dlg, "取消", Gtk.ResponseType.CANCEL);
+        var ok = add_button (dlg, "选择", Gtk.ResponseType.OK);
+        if (ok != null)
+            ok.get_style_context ().add_class ("suggested-action");
+        dlg.set_default_response (Gtk.ResponseType.OK);
+        dlg.show_all ();
+
+        int resp = dlg.run ();
+        int idx = combo.get_active ();
+        dlg.destroy ();
+
+        if (resp != Gtk.ResponseType.OK || idx < 0
+            || idx >= (int) list.length)
+            return null;
+        return list.get ((uint) idx);
+    }
+
     private string read_text (string path) {
         string data;
         try {
@@ -1622,17 +2004,32 @@ namespace Dialogs {
      * DesktopFiles.build_content + 标记键，行为等价且不依赖规则引擎。
      */
     private string claim_rebuild (AppEntry entry, DesktopFiles.Entry d, RepairPlan plan) {
-        string content;
-
-        bool rewrite = plan.rewrite_exec || plan.fix_wrapper;
-        string exec_line = d.exec_line;
-
-        if (rewrite) {
-            exec_line = DesktopFiles.build_exec_arg (entry.path) + " %U";
+        // 纯认领：模式保守，且没有勾选任何会改写文件其余部分的选项。
+        //
+        // 此时必须绕开下面的行级重建 —— 重建会丢掉注释、空行和
+        // [Desktop Action …] 等附加组，与认领对话框「保留原文，只追加
+        // 标记」的承诺相矛盾。Repair.append_markers 按字节保留原文、
+        // 幂等地把三个标记键插入 [Desktop Entry] 组，正好是纯认领
+        // 需要的全部动作；也正因为它已经写入标记键，这里必须直接返回，
+        // 不能再走到函数末尾的「末尾追加标记键」块（否则标记会出现两遍）。
+        //
+        // 一旦用户要求重写 Exec / 修正包装层 / 规范化文件名，或选择
+        // 补全模式，文件本来就要被改写，才回退到行级重建。
+        bool pure_claim = plan.mode == FixMode.CONSERVATIVE
+                       && !plan.rewrite_exec
+                       && !plan.fix_wrapper
+                       && !plan.rename_file;
+        if (pure_claim) {
+            plan.proposed_content = Repair.append_markers (
+                read_text (d.file_path), entry.path);
+            return plan.proposed_content;
         }
 
+        // 其余情况一律走最小改写：只动 Exec / TryExec 两行，再追加标记键。
+        // 注释、空行、原始写法、[Desktop Action …] 等附加组全部逐字节保留。
         if (plan.mode == FixMode.ENRICH) {
-            content = DesktopFiles.build_content (
+            // 「补全」明确要求按标准字段整体生成，这时才允许重写全文
+            plan.proposed_content = DesktopFiles.build_content (
                 entry.path,
                 d.name != "" ? d.name : entry.get_best_name (),
                 d.generic_name,
@@ -1642,55 +2039,14 @@ namespace Dialogs {
                 d.startup_wm_class,
                 entry.mimetype,
                 true, "%U");
-        } else {
-            // 只认领 + 可选修 Exec：保留原文，替换必要字段
-            var sb = new GLib.StringBuilder ();
-            foreach (string raw in read_text (d.file_path).split ("\n")) {
-                string line = raw.strip ();
-                if (line == "" || line.has_prefix ("#"))
-                    continue;
-
-                if (line.has_prefix ("[") && line.has_suffix ("]")) {
-                    if (line == "[Desktop Entry]") {
-                        if (sb.len > 0) sb.append_c ('\n');
-                        sb.append ("[Desktop Entry]\n");
-                    }
-                    continue;
-                }
-
-                int eq = line.index_of_char ('=');
-                if (eq <= 0)
-                    continue;
-
-                string key = line.substring (0, eq).strip ();
-                if (key.has_prefix (DesktopFiles.MARKER_BOOL)
-                 || key.has_prefix (DesktopFiles.MARKER_PATH)
-                 || key.has_prefix (DesktopFiles.MARKER_VERSION))
-                    continue;      // 重新追加，保证在末尾
-
-                if (key == "Exec" && rewrite)
-                    sb.append ("Exec=%s\n".printf (exec_line));
-                else if (key == "TryExec")
-                    sb.append ("TryExec=%s\n".printf (entry.path));
-                else
-                    sb.append (line).append_c ('\n');
-            }
-
-            content = sb.str;
-            if (!content.has_suffix ("\n"))
-                content += "\n";
+            return plan.proposed_content;
         }
 
-        // 末尾追加标记键
-        var out = new GLib.StringBuilder ();
-        out.append (content);
-        if (content.length > 0 && !content.has_suffix ("\n"))
-            out.append_c ('\n');
-        out.append ("%s=true\n".printf (DesktopFiles.MARKER_BOOL));
-        out.append ("%s=%s\n".printf (DesktopFiles.MARKER_PATH, entry.path));
-        out.append ("%s=%s\n".printf (DesktopFiles.MARKER_VERSION, APPMGR_VERSION));
-
-        plan.proposed_content = out.str;
+        plan.proposed_content = Repair.claim_rewrite (
+            read_text (d.file_path),
+            entry.path,
+            plan.rewrite_exec || plan.fix_wrapper,
+            true);   // TryExec 一律补齐/更新
         return plan.proposed_content;
     }
 

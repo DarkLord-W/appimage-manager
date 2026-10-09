@@ -784,6 +784,75 @@ public int main (string[] args) {
                DesktopFiles.validate_content (fixed_up));
     }
 
+    /* ══ 15. 认领时改写 Exec 也要保真 ═════════════════════════════
+     *
+     * 纯认领走 append_markers（已有测试）。但用户勾了「修正 Exec 转义」
+     * 就会走改写路径 —— 那条路径原先同样逐行重建，注释、空行、附加组
+     * 一并丢失。现在改为只动 Exec / TryExec 两行。
+     * ══════════════════════════════════════════════════════════════ */
+    stdout.printf ("\n── 15. 认领改写的保真 ────────────────────\n");
+
+    string messy =
+        "# 手写注释，别丢\n"
+        + "[Desktop Entry]\n"
+        + "Type=Application\n"
+        + "Name = 带空格写法\n"
+        + "\n"
+        + "Exec=/tmp/claim-test/Old Name.AppImage %U\n"   // 未转义，需要修
+        + "TryExec=/tmp/claim-test/Old Name.AppImage\n"
+        + "Terminal=false\n"
+        + "\n"
+        + "[Desktop Action Keep]\n"
+        + "Name=保留我\n"
+        + "Exec=/tmp/claim-test/Old Name.AppImage --k\n";
+
+    string rw = Repair.claim_rewrite (messy, "/tmp/claim-test/New.AppImage",
+                                      true, true);
+
+    check (ref checks, ref failures, "改写 Exec 后仍保留注释",
+           rw.contains ("# 手写注释，别丢"), "");
+    check (ref checks, ref failures, "改写 Exec 后仍保留原写法 Name = 带空格写法",
+           rw.contains ("Name = 带空格写法"), "");
+    check (ref checks, ref failures, "改写 Exec 后仍保留附加组",
+           rw.contains ("[Desktop Action Keep]") && rw.contains ("Name=保留我"), "");
+    check (ref checks, ref failures, "Exec 已被正确转义并指向新路径",
+           rw.contains ("Exec=\"/tmp/claim-test/New.AppImage\" %U"),
+           "仍含旧值");
+    check (ref checks, ref failures, "TryExec 已更新",
+           rw.contains ("TryExec=/tmp/claim-test/New.AppImage"), "");
+    check (ref checks, ref failures, "附加组里的旧路径没有被误改",
+           rw.contains ("--k") && rw.contains ("Old Name.AppImage"),
+           "连别的组也一起改了");
+    check (ref checks, ref failures, "追加了标记键",
+           rw.contains ("X-AppImage-Manager=true")
+           && rw.contains ("Path=/tmp/claim-test/New.AppImage"), "");
+    check (ref checks, ref failures, "标记键在附加组之前",
+           rw.index_of ("X-AppImage-Manager=true")
+           < rw.index_of ("[Desktop Action Keep]"), "");
+    check (ref checks, ref failures, "改写后通过 desktop-file-validate",
+           DesktopFiles.validate_content (rw) == "",
+           DesktopFiles.validate_content (rw));
+
+    // 幂等
+    string rw2 = Repair.claim_rewrite (rw, "/tmp/claim-test/New.AppImage", true, true);
+    int mc = 0;
+    int fp = 0;
+    while (true) {
+        int q = rw2.index_of ("X-AppImage-Manager=true", fp);
+        if (q < 0) break;
+        mc++; fp = q + 1;
+    }
+    check (ref checks, ref failures, "重复改写幂等（标记键只有一份）",
+           mc == 1, "出现 %d 次".printf (mc));
+    check (ref checks, ref failures, "重复改写不重复插 TryExec",
+           rw2.index_of ("TryExec=") == rw2.last_index_of ("TryExec="), "");
+
+    // 不改 Exec 时，Exec 行应逐字保留
+    string keep = Repair.claim_rewrite (messy, "/tmp/claim-test/New.AppImage",
+                                        false, false);
+    check (ref checks, ref failures, "不改 Exec 时原行逐字保留",
+           keep.contains ("Exec=/tmp/claim-test/Old Name.AppImage %U"), "");
+
     /* ══ 汇总 ════════════════════════════════════════════════════ */
     stdout.printf ("\n═══════════════════════════════════════════\n");
     if (failures == 0) {

@@ -86,15 +86,26 @@ public class AppEntry : GLib.Object {
     }
 
     public string get_status_text () {
-        // 健康问题优先展示，因为用户更需要知道「哪里坏了」
         if (match == MatchState.BROKEN)
             return "失效";
+
+        // 「外部创建」优先于健康度展示。
+        //
+        // 理由：它是最需要用户动作的状态 —— 条目还没纳入管理，修复和
+        // 失效检测都用不上，用户该做的是「认领」。之前健康度把它盖住了，
+        // 一个有问题但未被管理的外部条目会显示成「可优化 N」，用户根本
+        // 看不出它其实可以认领（这正是「认领好像没做」的观感来源）。
+        // 有问题就把数量附在后面，两个信息都不丢。
+        if (match == MatchState.EXTERNAL)
+            return problems.length > 0
+                ? "外部 · %d".printf (problems.length)
+                : "外部";
+
+        // 已纳入管理的条目，健康度才是首要信息
         if (health == HealthState.CORRUPT)
             return "损坏";
         if (health == HealthState.IMPROVABLE)
             return "可优化 %d".printf (problems.length);
-        if (match == MatchState.EXTERNAL)
-            return "外部";
         if (match == MatchState.REGISTERED)
             return "已创建";
         return "新发现";

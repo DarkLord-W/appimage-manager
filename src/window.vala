@@ -505,8 +505,10 @@ public class MainWindow : Gtk.ApplicationWindow {
             n_new > 0 ? "创建启动器" : "没有「新发现」的条目");
         set_menu_item (ctx_repair, n_problem > 0,
             n_problem > 0 ? "修复问题" : "没有需要修复的问题");
-        set_menu_item (ctx_claim, n_ext > 0,
-            n_ext > 0 ? "认领" : "没有「外部创建」的条目");
+        set_menu_item (ctx_claim, targets.length > 0,
+            targets.length > 0
+                ? "认领：把外部创建的启动器纳入管理，或手动指定一个 .desktop 文件"
+                : "先选中要处理的条目");
         set_menu_item (ctx_edit, has_reg,
             has_reg ? "编辑" : "这个条目还没有启动器");
         set_menu_item (ctx_delete, has_reg,
@@ -955,10 +957,13 @@ public class MainWindow : Gtk.ApplicationWindow {
 
     private Gdk.Pixbuf? make_pill (AppEntry e) {
         string text = e.get_status_text ();
+        // 优先级要和 get_status_text() 一致：外部创建排在最前，
+        // 否则一个「外部 + 有问题」的条目会被涂成警告色，
+        // 与药丸上写的「外部」自相矛盾。
         int sev = 0;
-        if (e.health == HealthState.CORRUPT) sev = 3;
+        if (e.match == MatchState.EXTERNAL) sev = 1;
+        else if (e.health == HealthState.CORRUPT) sev = 3;
         else if (e.health == HealthState.IMPROVABLE) sev = 2;
-        else if (e.match == MatchState.EXTERNAL) sev = 1;
 
         string color = PillPainter.color_for (text, sev);
         bool hollow = (e.match == MatchState.NEW);
@@ -1189,10 +1194,11 @@ public class MainWindow : Gtk.ApplicationWindow {
                   : (n_problem > 0 ? "检查并修复 %d 个条目的 .desktop".printf (n_problem)
                                    : "勾选的条目没有需要修复的问题"));
 
-        set_btn (bar_claim, !empty && n_ext > 0,
+        set_btn (bar_claim, !empty,
             empty ? "先勾选要处理的条目"
-                  : (n_ext > 0 ? "把 %d 个外部创建的启动器纳入管理".printf (n_ext)
-                               : "勾选的条目都已在管理之下"));
+                  : (n_ext > 0
+                        ? "把 %d 个外部创建的启动器纳入管理".printf (n_ext)
+                        : "没有可自动认领的条目。认领用于接管已存在但不是本工具创建的启动器 —— 点这里可以手动指定"));
 
         set_btn (bar_icon, !empty && n_no_icon > 0,
             empty ? "先勾选要处理的条目"
@@ -1300,11 +1306,13 @@ public class MainWindow : Gtk.ApplicationWindow {
 
     private void on_bar_claim () {
         var targets = filter_by (resolve_targets (), MatchState.EXTERNAL);
-        if (targets.length == 0) {
-            show_msg ("要处理的目标里没有「外部创建」的条目。");
+        if (targets.length > 0) {
+            do_claim (targets);          // 原有流程：逐个弹认领对话框
             return;
         }
-        do_claim (targets);
+        // 没有可自动认领的条目 → 走手动指定的流程
+        Dialogs.claim_manual (this, store, config);
+        store.rescan ();
     }
 
     private void on_bar_icon () {
