@@ -383,8 +383,200 @@ namespace Repair {
         }
 
         plan.rules_fired = fired.steal ();
-        plan.proposed_content = doc.to_text ();
+
+        // 重建模式本就承诺「整体重新生成」，走序列化；
+        // 其它模式只把真正变化的行写回去，注释/空行/其它组逐字节保留。
+        plan.proposed_content = (plan.mode == FixMode.REBUILD)
+            ? doc.to_text ()
+            : patch_original (original, doc);
         return plan.proposed_content;
+    }
+
+    /**
+     * 把算好的改动应用到原文上，只重写真正变化的行。
+     *
+     * 原先一律走 doc.to_text() 整体序列化，那会把注释和空行都吃掉 ——
+     * 而保守模式承诺的是「只改明确坏掉的字段」。用户精心写的注释不该
+     * 因为一次修复就消失。
+     *
+     * 规则：
+     *   · 组头、其它组、注释、空行 → 原样输出
+     *   · Main 组里值没变的键 → 原样输出（保留原始写法与空格）
+     *   · 值变了的键 → 重写成 key=新值
+     *   · 被删掉的键（例如悬空的 Actions=）→ 丢弃
+     *   · 新增的键 → 补在 Main 组末尾
+     */
+    private static string patch_original (string original, Doc doc) {
+        bool ends_nl = original.has_suffix ("\n");
+        var lines = new GenericArray<string> ();
+        foreach (string l in original.split ("\n"))
+            lines.add (l);
+        if (ends_nl && lines.length > 0 && lines[lines.length - 1] == "")
+            lines.remove_index (lines.length - 1);
+
+        var out = new GLib.StringBuilder ();
+        var seen = new GLib.HashTable<string, bool> (GLib.str_hash, GLib.str_equal);
+        bool in_main = false;
+
+        // Main 组结束时，把 doc 里有、原文里没有的键补上
+        void flush_added () {
+            foreach (string k in doc.order) {
+                if (!k.has_prefix ("Desktop Entry/"))
+                    continue;
+                string key = k.substring ("Desktop Entry/".length);
+                if (seen.contains (key))
+                    continue;
+                out.append ("%s=%s\n".printf (key, doc.values.lookup (k)));
+            }
+        }
+
+        for (uint i = 0; i < lines.length; i++) {
+            string line = lines[i];
+            string t = line.strip ();
+
+            if (t.has_prefix ("[") && t.has_suffix ("]")) {
+                if (in_main) {
+                    flush_added ();
+                    in_main = false;
+                }
+                if (t == "[Desktop Entry]")
+                    in_main = true;
+                out.append (line).append_c ('\n');
+                continue;
+            }
+
+            if (!in_main) {
+                // 其它组的内容，或文件头部的注释 —— 原样保留
+                out.append (line).append_c ('\n');
+                continue;
+            }
+
+            // Main 组内的行
+            if (t == "" || t.has_prefix ("#")) {
+                out.append (line).append_c ('\n');   // 空行/注释 → 原样
+                continue;
+            }
+
+            int eq = t.index_of_char ('=');
+            if (eq <= 0) {
+                out.append (line).append_c ('\n');
+                continue;
+            }
+
+            string key = t.substring (0, eq).strip ();
+            seen.insert (key, true);
+
+            string full = "Desktop Entry/" + key;
+            if (!doc.values.contains (full))
+                continue;   // 这个键被修复删掉了
+
+            // 直接和「原始值」比：doc.values 里存的就是原行 '=' 之后的部分，
+            // 所以未改动的键会逐字符相等，从而连 "Name = Foo" 这种带空格的
+            // 写法都能原样保留。不要重新拼 key=value 再比 —— 那会把
+            // 值里的前导空格算成差异，白白重写一行。
+            string newval = doc.values.lookup (full);
+            string orig_val = t.substring (eq + 1);
+            if (newval == orig_val)
+                out.append (line).append_c ('\n');   // 没变 → 保留原写法
+            else
+                out.append ("%s=%s\n".printf (key, newval));   // 变了 → 重写
+        }
+
+        if (in_main)
+            flush_added ();
+
+        string result = out.str;
+        if (!ends_nl && result.has_suffix ("\n"))
+            result = result.substring (0, result.length - 1);
+        return result;
+    }
+
+    /* ── 认领：字节级追加标记键 ──────────────────────────────────── */
+
+    /**
+     * 在 [Desktop Entry] 组的末尾追加三个标记键，原文其余部分逐字节保留。
+     *
+     * 为什么不走 Doc 往返：那条路径会把注释、空行都过滤掉，还会把
+     * [Desktop Action ...] 之类的附加组整组丢弃。而认领的承诺是
+     * 「原有内容一个字节都不改，只追加标记」—— 用户带着一个精心写好的
+     * .desktop 过来，不该因为被接管就掉内容。
+     *
+     * 插入位置：[Desktop Entry] 之后第一个以 '[' 开头的行之前；
+     *           没有后续组就插在文件末尾。
+     * 幂等：先移除已有的标记键行，再追加，重复认领不会越叠越多。
+     */
+    public static string append_markers (string original, string appimage_path) {
+        bool ends_with_newline = original.has_suffix ("\n");
+
+        var lines = new GenericArray<string> ();
+        foreach (string l in original.split ("\n"))
+            lines.add (l);
+
+        // split 会把结尾换行变成一个空尾巴，去掉它，最后再补回来
+        if (ends_with_newline && lines.length > 0
+            && lines[lines.length - 1] == "")
+            lines.remove_index (lines.length - 1);
+
+        // 1) 定位 [Desktop Entry] 组
+        int de_start = -1;
+        for (uint i = 0; i < lines.length; i++) {
+            string t = lines[i].strip ();
+            if (t == "[Desktop Entry]") {
+                de_start = (int) i;
+                break;
+            }
+        }
+
+        // 2) 组的结束：下一个以 '[' 开头的行；没有就是文件末尾
+        int de_end = (int) lines.length;   // 半开区间
+        if (de_start >= 0) {
+            for (uint i = (uint) de_start + 1; i < lines.length; i++) {
+                string t = lines[i].strip ();
+                if (t.has_prefix ("[")) {
+                    de_end = (int) i;
+                    break;
+                }
+            }
+        }
+
+        // 3) 去掉组内已存在的标记键（幂等），同时找到插入点
+        var kept = new GenericArray<string> ();
+        int insert_at = -1;   // 在 kept 里插入的位置
+
+        for (int i = 0; i < lines.length; i++) {
+            if (de_start >= 0 && i >= de_start && i < de_end) {
+                string t = lines[i].strip ();
+                if (t.has_prefix (DesktopFiles.MARKER_BOOL + "=")
+                 || t.has_prefix (DesktopFiles.MARKER_PATH + "=")
+                 || t.has_prefix (DesktopFiles.MARKER_VERSION + "="))
+                    continue;   // 丢弃旧的标记行，稍后统一追加
+            }
+
+            kept.add (lines[i]);
+
+            // 记录组尾位置
+            if (de_start >= 0 && i == de_end - 1)
+                insert_at = (int) kept.length;
+        }
+
+        if (insert_at < 0) {
+            // 没找到 [Desktop Entry]，或它正好是文件最后一行 → 追加到末尾
+            insert_at = (int) kept.length;
+        } else {
+            // 组尾若有空行，把标记插在空行之前 —— 让标记紧跟最后一个键，
+            // 空行继续充当与下一个组之间的分隔，读起来更自然。
+            while (insert_at > 0 && kept[insert_at - 1].strip () == "")
+                insert_at--;
+        }
+
+        // 4) 插入标记键
+        kept.insert (insert_at, DesktopFiles.MARKER_VERSION + "=" + APPMGR_VERSION);
+        kept.insert (insert_at, DesktopFiles.MARKER_PATH + "=" + appimage_path);
+        kept.insert (insert_at, DesktopFiles.MARKER_BOOL + "=true");
+
+        // 5) 拼回去，保持原来的结尾换行状态
+        string joined = string.joinv ("\n", kept.steal ());
+        return ends_with_newline ? joined + "\n" : joined;
     }
 
     /* ── 差异生成 ────────────────────────────────────────────────── */

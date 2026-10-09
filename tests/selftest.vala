@@ -617,6 +617,173 @@ public int main (string[] args) {
     check (ref checks, ref failures, "传入 null 不崩、返回 false",
            !Store.matches_filter (null, 1, "x"), "");
 
+    /* ══ 13. 认领的字节保真 ═══════════════════════════════════════
+     *
+     * 回归测试：认领原先走 Doc 往返，会丢注释、丢空行、还会把
+     * [Desktop Action ...] 整组删掉 —— 与「原有内容一个字节都不改，
+     * 只追加标记」的承诺不符。现在改为字节级插入。
+     * ══════════════════════════════════════════════════════════════ */
+    stdout.printf ("\n── 13. 认领的字节保真 ────────────────────\n");
+
+    // 故意包含：开头注释、带空格的原写法、组内空行、附加组
+    string sample =
+        "# 这是我自己写的注释，不能被弄丢\n"
+        + "[Desktop Entry]\n"
+        + "Type=Application\n"
+        + "Name = Foo Bar\n"
+        + "Comment=中文描述\n"
+        + "\n"
+        + "Exec=\"/tmp/claim-test/Foo.AppImage\" %U\n"
+        + "Terminal=false\n"
+        + "\n"
+        + "[Desktop Action NewWindow]\n"
+        + "Name=新窗口\n"
+        + "Exec=\"/tmp/claim-test/Foo.AppImage\" --new-window\n";
+
+    string claimed = Repair.append_markers (sample, "/tmp/claim-test/Foo.AppImage");
+
+    check (ref checks, ref failures, "保留文件开头的注释",
+           claimed.contains ("# 这是我自己写的注释"), "");
+    check (ref checks, ref failures, "保留 Main 组里的注释（如果有）",
+           claimed.contains ("中文描述"), "");
+    check (ref checks, ref failures, "保留带空格的原写法 Name = Foo Bar",
+           claimed.contains ("Name = Foo Bar"),
+           "被规范化成了 Name=Foo Bar");
+    check (ref checks, ref failures, "保留组内空行（作为与下一个组的分隔）",
+           claimed.contains ("X-AppImage-Manager-Version=1.0.0\n\n[Desktop Action NewWindow]"),
+           "空行丢了");
+    check (ref checks, ref failures, "完整保留 Desktop Action 组",
+           claimed.contains ("[Desktop Action NewWindow]")
+           && claimed.contains ("Name=新窗口")
+           && claimed.contains ("--new-window"),
+           "附加组被删掉了");
+
+    check (ref checks, ref failures, "追加了三个标记键",
+           claimed.contains ("X-AppImage-Manager=true")
+           && claimed.contains ("X-AppImage-Manager-Path=/tmp/claim-test/Foo.AppImage")
+           && claimed.contains ("X-AppImage-Manager-Version="), "");
+
+    // 标记键必须落在 [Desktop Entry] 组内，不能跑到 Action 组后面
+    int pos_marker = claimed.index_of ("X-AppImage-Manager=true");
+    int pos_action = claimed.index_of ("[Desktop Action NewWindow]");
+    check (ref checks, ref failures, "标记键插在 Action 组之前（属于 Main 组）",
+           pos_marker > 0 && pos_action > 0 && pos_marker < pos_action,
+           "marker@%d action@%d".printf (pos_marker, pos_action));
+
+    // 逐字节比对：差异只应来自插入的三行
+    var diff_lines = new GenericArray<string> ();
+    foreach (string l in claimed.split ("\n"))
+        if (!sample.contains (l) && l.strip () != "")
+            diff_lines.add (l);
+    check (ref checks, ref failures, "与原文件的差异只有新增的三行",
+           diff_lines.length == 3,
+           "多了 %d 行: %s".printf (diff_lines.length, join (diff_lines)));
+
+    // 幂等：重复认领不应越叠越多
+    string again = Repair.append_markers (claimed, "/tmp/claim-test/Foo.AppImage");
+    int cnt = 0;
+    int from = 0;
+    while (true) {
+        int p = again.index_of ("X-AppImage-Manager=true", from);
+        if (p < 0) break;
+        cnt++;
+        from = p + 1;
+    }
+    check (ref checks, ref failures, "重复认领幂等（标记键只有一份）",
+           cnt == 1, "出现了 %d 次".printf (cnt));
+
+    // 换一个 AppImage 路径认领时，旧路径应被替换
+    string re = Repair.append_markers (claimed, "/tmp/claim-test/Bar.AppImage");
+    check (ref checks, ref failures, "改认领到别的 AppImage 时路径被更新",
+           re.contains ("X-AppImage-Manager-Path=/tmp/claim-test/Bar.AppImage")
+           && !re.contains ("Path=/tmp/claim-test/Foo.AppImage"), "");
+
+    // 末尾换行状态要保持
+    string no_nl = "[Desktop Entry]\nType=Application\nName=X";
+    string r1 = Repair.append_markers (no_nl, "/a.AppImage");
+    check (ref checks, ref failures, "原文没有结尾换行 → 结果也没有",
+           !r1.has_suffix ("\n"), "末尾多了换行");
+
+    string with_nl = "[Desktop Entry]\nType=Application\nName=X\n";
+    string r2 = Repair.append_markers (with_nl, "/a.AppImage");
+    check (ref checks, ref failures, "原文有结尾换行 → 结果也有",
+           r2.has_suffix ("\n"), "末尾丢了对换行");
+
+    // 完全没有 [Desktop Entry] 的坏文件也不能崩
+    string no_group = "Name=Broken\nType=Application\n";
+    string r3 = Repair.append_markers (no_group, "/a.AppImage");
+    check (ref checks, ref failures, "没有 [Desktop Entry] 时追加到末尾且不崩",
+           r3.contains ("Name=Broken")
+           && r3.contains ("X-AppImage-Manager=true"), "");
+
+    // 认领后的内容必须能通过校验
+    check (ref checks, ref failures, "认领后的内容通过 desktop-file-validate",
+           DesktopFiles.validate_content (claimed) == "",
+           DesktopFiles.validate_content (claimed));
+
+    /* ══ 14. 修复时的注释保真 ════════════════════════════════════
+     *
+     * 与认领同源的问题：修复原先也走 doc.to_text() 整体序列化，
+     * 会把注释、空行、以及原始写法（如 “Name = Foo”）都规范化掉。
+     * 保守模式承诺「只改明确坏掉的字段」，所以只应重写真正变化的行。
+     * ══════════════════════════════════════════════════════════════ */
+    stdout.printf ("\n── 14. 修复的注释保真 ────────────────────\n");
+
+    if (sandboxed) {
+        string raw_path = GLib.Path.build_filename (sandbox, "repair-fidelity.desktop");
+        string raw_text =
+            "# 我自己写的注释：这个启动器手动调过，别乱改\n"
+            + "[Desktop Entry]\n"
+            + "Type=Application\n"
+            + "Version=2.0\n"                 // ← 这一行要修
+            + "Name = 带空格的写法\n"          // ← 保持原样
+            + "\n"                             // ← 空行
+            + "Comment=手写的描述\n"
+            + "Exec=\"/tmp/claim-test/Foo.AppImage\" %U\n"
+            + "Terminal=true\n"                // ← 这一行也要修
+            + "\n"
+            + "[Desktop Action Custom]\n"
+            + "Name=自定义动作\n"
+            + "Exec=\"/tmp/claim-test/Foo.AppImage\" --x\n";
+        GLib.FileUtils.set_contents (raw_path, raw_text);
+
+        var fe = DesktopFiles.parse (raw_path);
+        var fapp = new AppEntry ("/tmp/claim-test/Foo.AppImage");
+        fapp.meta_name = "Foo";
+
+        var frs = RuleSet.check (fe, fapp);
+        var fplan = new RepairPlan (fapp, fe);
+        fplan.problems = frs.problems;
+        fplan.selected = new bool[frs.problems.length];
+        for (int i = 0; i < fplan.selected.length; i++)
+            fplan.selected[i] = frs.problems[i].applyable;
+        fplan.mode = FixMode.CONSERVATIVE;
+
+        string fixed_up = Repair.build_repaired (fplan);
+
+        check (ref checks, ref failures, "修复后保留文件头注释",
+               fixed_up.contains ("# 我自己写的注释"), "");
+        check (ref checks, ref failures, "修复后保留原写法 Name = 带空格的写法",
+               fixed_up.contains ("Name = 带空格的写法"),
+               "被规范化掉了");
+        check (ref checks, ref failures, "修复后保留空行",
+               fixed_up.contains ("\n\n"), "");
+        check (ref checks, ref failures, "修复后保留 Desktop Action 组",
+               fixed_up.contains ("[Desktop Action Custom]")
+               && fixed_up.contains ("Name=自定义动作"), "");
+
+        check (ref checks, ref failures, "Version 确实被钳回 1.5",
+               fixed_up.contains ("Version=1.5")
+               && !fixed_up.contains ("Version=2.0"), "");
+        check (ref checks, ref failures, "Terminal 确实被改成 false",
+               fixed_up.contains ("Terminal=false")
+               && !fixed_up.contains ("Terminal=true"), "");
+
+        check (ref checks, ref failures, "修复后内容通过 desktop-file-validate",
+               DesktopFiles.validate_content (fixed_up) == "",
+               DesktopFiles.validate_content (fixed_up));
+    }
+
     /* ══ 汇总 ════════════════════════════════════════════════════ */
     stdout.printf ("\n═══════════════════════════════════════════\n");
     if (failures == 0) {
