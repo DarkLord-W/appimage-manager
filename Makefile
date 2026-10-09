@@ -4,42 +4,46 @@ DATADIR     ?= $(PREFIX)/share
 DESTDIR     ?=
 
 VALAC       ?= valac
-PKGS        := gtk+-3.0 gio-2.0 glib-2.0
-VAPIDIR     := $(shell pkg-config --variable=vapidir gtk+-3.0)
+PKGS        := gtk+-3.0 gdk-pixbuf-2.0 gio-2.0 json-glib-1.0
+PKG_FLAGS   := $(addprefix --pkg ,$(PKGS))
+PKG_CFLAGS  := $(shell pkg-config --cflags $(PKGS))
+PKG_LIBS    := $(shell pkg-config --libs $(PKGS))
+# pkg-config 的 vapidir 变量在 Debian 打包里常为空，
+# 这里直接用 valac 的默认搜索路径，只在需要覆盖时才指定
+VAPIDIR     ?=
 CC          ?= gcc
+VERSION     ?= 1.0.0
 
-SOURCES := $(wildcard src/*.vala)
+SOURCES := $(sort $(wildcard src/*.vala))
 VALA_C  := $(SOURCES:.vala=.c)
 OBJS    := $(SOURCES:.vala=.o)
 DEPS    := $(OBJS:.o=.d)
 BIN     := appimage-manager
 
-CSS     := data/style.css
 ICON    := data/appimage-manager.png
 
-# 编译期固定的应用目录，供路径解析模块使用
-VALAFLAGS := --pkg $(PKGS) \
-             --vapidir=$(VAPIDIR) \
+VALAFLAGS := $(PKG_FLAGS) \
+             $(if $(VAPIDIR),--vapidir=$(VAPIDIR),) \
              --target-glib=2.76 \
              --enable-deprecated \
-             -X -DAPPMGR_VERSION=\"$(VERSION)\" \
-             -X -DAPPMGR_PREFIX=\"$(PREFIX)\" \
              --disable-warnings
 
-.PHONY: all build clean install uninstall run valac
+.PHONY: all clean install uninstall run valac
 
 all: $(BIN)
 
 $(BIN): $(OBJS)
-	$(CC) -o $@ $(OBJS) $(shell pkg-config --libs $(PKGS)) -lm
+	$(CC) -o $@ $(OBJS) $(PKG_LIBS) -lm
 
 src/%.o: src/%.c
-	$(CC) -c -o $@ $< $(shell pkg-config --cflags $(PKGS)) -Wno-deprecated-declarations
+	$(CC) -c -o $@ $< $(PKG_CFLAGS) -Wno-deprecated-declarations
 
-src/%.c: src/%.vala
-	$(VALAC) $(VALAFLAGS) -D $(PKGS) -C $< -o $@
+# Vala 编译器需要一次看到全部源文件才能解析跨文件类型，
+# 因此统一生成后再分发到各目标
+$(VALA_C): $(SOURCES)
+	$(VALAC) $(VALAFLAGS) -C $(SOURCES)
 
-valac:            # 只重新生成 C，保留 .c 以便调试
+valac:
 	$(VALAC) $(VALAFLAGS) -C $(SOURCES)
 
 run: $(BIN)

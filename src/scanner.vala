@@ -19,11 +19,13 @@ namespace Scanner {
         try {
             var file = GLib.File.new_for_path (path);
             var stream = file.read (null);
-            var header = new uint8[10];
-            size_t n = stream.read_bytes (header, 0, 10, null);
+            GLib.Bytes bytes = stream.read_bytes (10, null);
 
-            if (n < 10)
+            if (bytes.get_size () < 10)
                 return false;
+
+            // 取出拷贝再用：get_data() 返回的是 const 视图
+            uint8[] header = GLib.Bytes.unref_to_data ((owned) bytes);
 
             // ELF magic
             if (header[0] != 0x7f || header[1] != 0x45
@@ -42,7 +44,7 @@ namespace Scanner {
 
     /** 判断扩展名是否像 AppImage（用于快速筛选候选） */
     public bool has_appimage_extension (string basename) {
-        string lower = basename.to_lower ();
+        string lower = basename.down ();
         string[] suffixes = { ".appimage", ".appimage.zsync" };
         foreach (string s in suffixes)
             if (lower.has_suffix (s))
@@ -80,10 +82,32 @@ namespace Scanner {
             walk (dir, recursive, found, rejected, errors, seen);
         }
 
-        res.found = (owned) found.to_array ();
-        res.rejected = (owned) rejected.to_array ();
-        res.errors = (owned) errors.to_array ();
+        res.found = to_array (found);
+        res.rejected = to_array (rejected);
+        res.errors = to_array (errors);
         return res;
+    }
+
+    /** GenericArray → string[]；比 steal() 少一层指针强转 */
+    private string[] to_array (GenericArray<string> arr) {
+        string[] out = {};
+        for (int i = 0; i < arr.length; i++)
+            out += arr.get ((uint) i);
+        return out;
+    }
+
+    /**
+     * GenericArray<string> 没有可用的 contains()。
+     *
+     * 注意：不能用 find()，它落到 g_ptr_array_find，是按指针比较，
+     * 字符串永远匹配不上。这里显式按内容逐个比较。
+     */
+    private bool arr_contains (GenericArray<string> arr, string needle) {
+        for (int i = 0; i < arr.length; i++) {
+            if (arr.get ((uint) i) == needle)
+                return true;
+        }
+        return false;
     }
 
     private void walk (string dir, bool recursive,
@@ -92,7 +116,7 @@ namespace Scanner {
                        GenericArray<string> errors,
                        GenericArray<string> seen) {
 
-        if (seen.contains (dir))
+        if (arr_contains (seen, dir))
             return;
         seen.add (dir);
 
@@ -106,20 +130,20 @@ namespace Scanner {
 
         string? name;
         while ((name = dir_enum.read_name ()) != null) {
-            string full = GLib.build_filename (dir, name);
+            string full = GLib.Path.build_filename (dir, name);
 
             // 不跟随符号链接，避免软链接环与越权访问
-            var info = GLib.FileUtils.lstat (full);
+            var info = AppPath.file_lstat (full);
             if (info == null)
                 continue;
 
-            if (info.file_type == GLib.FileType.DIRECTORY) {
+            if (info.get_file_type () == GLib.FileType.DIRECTORY) {
                 if (recursive)
                     walk (full, recursive, found, rejected, errors, seen);
                 continue;
             }
 
-            if (info.file_type != GLib.FileType.REGULAR)
+            if (info.get_file_type () != GLib.FileType.REGULAR)
                 continue;
 
             if (!has_appimage_extension (name))
@@ -127,7 +151,7 @@ namespace Scanner {
 
             // 同名文件可能被多个扫描目录覆盖，用 realpath 去重
             string canonical = AppPath.canonical (full);
-            if (found.contains (canonical) || rejected.contains (canonical))
+            if (arr_contains (found, canonical) || arr_contains (rejected, canonical))
                 continue;
 
             if (is_appimage (full))
@@ -135,7 +159,5 @@ namespace Scanner {
             else
                 rejected.add (full);
         }
-
-        dir_enum.close ();
     }
 }

@@ -71,59 +71,65 @@ public class AppConfig : GLib.Object {
 
     /** 读所有扫描目录，去重且保留顺序 */
     public string[] scan_dirs () {
-        string[] out = {};
         if (!has_key ("scan", "dirs"))
-            return out;
+            return {};
 
-        string raw = get_string ("scan", "dirs", "");
-        foreach (string d in raw.split (":")) {
-            string t = AppPath.canonical (d.strip ());
-            if (t != "")
-                out += t;
-        }
-        return out;
+        return dedup_paths (get_string ("scan", "dirs", "").split (":"));
     }
 
     public void set_scan_dirs (string[] dirs) {
-        var uniq = new GenericArray<string> ();
-        var seen = new GenericArray<string> ();
-        foreach (string d in dirs) {
-            string t = AppPath.canonical (d);
-            if (t == "" || seen.contains (t))
-                continue;
-            seen.add (t);
-            uniq.add (t);
-        }
-        set_string ("scan", "dirs", string.joinv (":", uniq.to_array ()));
+        set_string ("scan", "dirs", string.joinv (":", dedup_paths (dirs)));
     }
 
     public void add_scan_dir (string dir) {
         string t = AppPath.canonical (dir);
         if (t == "")
             return;
-        var cur = new GenericArray<string> ();
-        foreach (string d in scan_dirs ())
-            cur.add (d);
-        if (!cur.contains (t))
-            cur.add (t);
-        set_scan_dirs ((owned) cur.to_array ());
+
+        string[] cur = scan_dirs ();
+        foreach (string d in cur)
+            if (d == t)
+                return;         // 已在列表中
+
+        cur += t;
+        set_scan_dirs (cur);
     }
 
     public void remove_scan_dir (string dir) {
         string t = AppPath.canonical (dir);
-        var cur = new GenericArray<string> ();
+        string[] cur = {};
         foreach (string d in scan_dirs ())
             if (d != t)
-                cur.add (d);
-        set_scan_dirs ((owned) cur.to_array ());
+                cur += d;
+        set_scan_dirs (cur);
+    }
+
+    /** 规范化 + 去空 + 去重，保留原始顺序 */
+    private static string[] dedup_paths (string[] raw) {
+        string[] out = {};
+        foreach (string d in raw) {
+            string t = AppPath.canonical (d.strip ());
+            if (t == "")
+                continue;
+
+            bool dup = false;
+            foreach (string kept in out) {
+                if (kept == t) {
+                    dup = true;
+                    break;
+                }
+            }
+            if (!dup)
+                out += t;
+        }
+        return out;
     }
 
     // ── 通用存取 ──────────────────────────────────────────────────
 
     private bool has_key (string group, string key) {
         try {
-            kf.has_key (group, key);
-            return true;
+            return kf.has_key (group, key);
         } catch {
             return false;
         }
@@ -186,11 +192,12 @@ public class AppConfig : GLib.Object {
             if (p != "")
                 return p;
         }
-        return GLib.build_filename (AppPath.icons_hicolor_dir (), "%d" + icon_size (), "apps");
+        return GLib.Path.build_filename (
+            AppPath.icons_hicolor_dir (), "%d".printf (icon_size ()), "apps");
     }
 
     public string cached_icon_path (string slug, string ext) {
-        return GLib.build_filename (icon_dir (), "%s.%s".printf (slug, ext));
+        return GLib.Path.build_filename (icon_dir (), "%s.%s".printf (slug, ext));
     }
 
     public bool should_update_database () { return get_bool ("sync", "update_desktop_database", true); }
@@ -221,7 +228,8 @@ public class AppConfig : GLib.Object {
         try {
             string data = kf.to_data ();
             // 原子写，避免读到半截配置
-            string tmp = "%s.tmp%u".printf (path, GLib.get_real_time () % 1000000);
+            string tmp = "%s.tmp%u".printf (
+                path, (uint) (GLib.get_real_time () % 1000000));
             GLib.FileUtils.set_contents (tmp, data);
             GLib.FileUtils.rename (tmp, path);
         } catch (GLib.Error e) {
