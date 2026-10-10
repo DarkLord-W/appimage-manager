@@ -431,9 +431,53 @@ infobar button {
     border-radius: 5px;
 }
 
-infobar.warning label,
-infobar.warning button {
-    color: inherit;
+/* 提示条的文字与按钮颜色。
+ *
+ * 原来写的是 color: inherit —— inherit 取的是 infobar 自身继承来的颜色，
+ * 而 Adwaita 为了给橙色按钮配白字，把这个颜色设成了近白。结果浅色主题下
+ * 「近白文字 + 浅橙背景」实测对比度只有 1.06，等于看不见。
+ *
+ * @theme_fg_color 才是主题的前景色（浅色主题是深灰、深色主题是浅灰），
+ * 方向自动正确，不会在某个主题下反过来。
+ */
+/* 注意必须用 > 限定成提示条的**直接**子标签。
+ * 写成 infobar.warning label 会连按钮内部的 label 一起命中 ——
+ * 按钮里也是 label，于是上面那条规则把按钮的白色文字也改成了深色，
+ * 深字压在深色按钮底上，照样看不清。
+ * InfoBar 的结构是 infobar > revealer > box > (label + action)。
+ */
+/* 层级：infobar > revealer > box > content_area > label
+ * 少写一层就匹配不到 —— 之前用 box > label 时规则静默失效，文字仍是浅色。
+ * 这里两条路径都写上，兼容不同 GTK 版本对 InfoBar 内部层数的差异。
+ *
+ * 不能用 :not(button label) 排除按钮里的标签 —— GTK3 的 CSS 不支持
+ * :not()，写上去会导致整份样式表解析失败（实测：应用直接退出）。
+ */
+infobar.info > revealer > box > label,
+infobar.warning > revealer > box > label,
+infobar.error > revealer > box > label,
+infobar.info > revealer > box > box > label,
+infobar.warning > revealer > box > box > label,
+infobar.error > revealer > box > box > label {
+    color: @theme_fg_color;
+}
+
+infobar button {
+    /* 按钮底色压暗一档，白字才够对比度（原来的亮橙底白字只有 2.31） */
+    background-image: none;
+    background-color: shade(@warning_color, 0.72);
+    border-color: shade(@warning_color, 0.60);
+    color: #ffffff;
+}
+
+infobar.info button {
+    background-color: shade(@accent_bg_color, 0.78);
+    border-color: shade(@accent_bg_color, 0.62);
+}
+
+infobar.error button {
+    background-color: shade(@error_color, 0.82);
+    border-color: shade(@error_color, 0.68);
 }
 
 /* ── 详情面板 ───────────────────────────────────────────────────────────── */
