@@ -301,18 +301,6 @@ jobs:
           [ "$fail" -eq 0 ] || exit 1
           echo "三个包的版本号都与 tag $V 一致"
 
-      - name: 生成 SHA256SUMS
-        # 校验和原先是嵌在 Release 说明的代码块里的，脚本没法直接下载核对。
-        # 做成独立资产，`sha256sum -c SHA256SUMS` 就能验全部。
-        run: |
-          set -euo pipefail
-          cd dist
-          # 排除自身，也排除那个给人看的说明文件
-          rm -f SHA256SUMS
-          sha256sum *.AppImage *.tar.gz *.deb *.rpm *.pkg.tar.zst \
-            > SHA256SUMS
-          cat SHA256SUMS
-
       - name: 校验 deb 包结构与依赖
         # 包能打出来不代表能用。这里实际解开看一眼：文件齐不齐、
         # 依赖声明对不对。依赖名写错（比如 deb 上写成 rpm 的名字）
@@ -358,6 +346,18 @@ jobs:
               echo "::error::deb Depends 缺 $need（$lib 需要它）"; exit 1; }
           done
           echo "deb 结构与依赖校验通过"
+
+      - name: 生成 SHA256SUMS
+        # 校验和原先是嵌在 Release 说明的代码块里的，脚本没法直接下载核对。
+        # 做成独立资产，`sha256sum -c SHA256SUMS` 就能验全部。
+        run: |
+          set -euo pipefail
+          cd dist
+          # 排除自身，也排除那个给人看的说明文件
+          rm -f SHA256SUMS
+          sha256sum *.AppImage *.tar.gz *.deb *.rpm *.pkg.tar.zst \
+            > SHA256SUMS
+          cat SHA256SUMS
 
       - name: 收集产物
         id: artifacts
