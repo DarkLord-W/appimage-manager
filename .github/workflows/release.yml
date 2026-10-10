@@ -1,11 +1,20 @@
 name: Release
 
-# 只在打 tag 时跑。产出四种包并挂到 GitHub Release：
+# 只在打 tag 时跑。产出七种资产并挂到 GitHub Release：
 #   · AppImage        免安装，双击即用
 #   · 原生二进制+数据 tar.gz   解压即用，不需要 root
 #   · deb             Debian / Ubuntu / Kali / Mint
 #   · rpm             Fedora / RHEL / openSUSE
 #   · pkg.tar.zst     Arch / Manjaro
+#   · src.tar.gz      源码（发行版打包者用，GPL 对应源码）
+#   · SHA256SUMS      校验和
+#   · README-免安装说明.txt
+#
+# 几个容易出错的点，代码里都有对应断言挡着：
+#   · nfpm 配置里的 version 是写死的，必须从 tag 生成临时配置；
+#     并且打完包要从包里**读回**版本号核对（只改不验，下次照样能错回去）
+#   · 源码包要能真的解开并编译成功，不是打个 tar 就完事
+#   · 每个二进制包都要解开看结构，deb 的 Depends 还要逐库比对
 #
 # 版本号从 tag 取（v1.2.3 → 1.2.3），不硬编码 —— 硬编码的版本号早晚
 # 会和实际发布对不上，而那种不一致排查起来很费时间。
@@ -42,12 +51,22 @@ jobs:
           else
             V="${GITHUB_REF_NAME#v}"
           fi
-          # 版本号会进包名，必须校验 —— 免得一个畸形 tag 打出乱码文件名
-          echo "$V" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || {
-            echo "::error::版本号不合法: '$V'（应形如 1.2.3）"
+          # 版本号会进包名，必须校验 —— 免得一个畸形 tag 打出乱码文件名。
+          #
+          # 允许 -rc<N> / -beta<N> 后缀：下面 prerelease: 的判断就认这两种，
+          # 之前这里却只收纯 X.Y.Z，等于「声明支持预发布」但一打
+          # v1.1.0-rc1 就被这步 exit 1 拦掉，两处自相矛盾。
+          #
+          # base 是去掉预发布后缀的部分，给包名和校验回读用：nfpm 的
+          # semver schema 自己会把 1.1.0-rc1 折成 Version=1.1.0 +
+          # Prerelease=rc1，deb 侧落成 1.1.0~rc1，版本序正好排在
+          # 1.1.0 前面，不会出现「rc 比正式版新」。
+          echo "$V" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-(rc|beta)[0-9]*)?$' || {
+            echo "::error::版本号不合法: '$V'（应形如 1.2.3 或 1.2.3-rc1）"
             exit 1
           }
           echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "base=${V%%-*}" >> "$GITHUB_OUTPUT"
           echo "构建版本 $V"
 
       - name: 安装编译依赖
@@ -145,7 +164,13 @@ jobs:
           tar -czf "dist/appimage-manager-$V-linux-x86_64.tar.gz" \
               -C "$STAGE" usr
           echo "已附带运行说明"
-          cat > "dist/appimage-manager-$V-linux-x86_64/README.txt" <<EOF
+          # 运行说明写成**独立资产**，不塞进 tar 包，也不写进那个已经被
+          # tar 掉的暂存目录 ——
+          #   写进暂存目录：tar 已经打完了，写进去也没人看得到；
+          #   塞进 tar 包：会破坏包内 usr/ 前缀的干净结构。
+          # 之前正是写在暂存目录里，内容还自称「需要从 Release 页面单独
+          # 下载」，而 files: 列表里根本没有它 —— 永远发不出去。
+          cat > "dist/README-免安装说明.txt" <<EOF
           AppImage Manager $V （免安装版）
 
           解压后直接运行，不需要 root：
@@ -163,11 +188,50 @@ jobs:
               install -Dm644 ./appimage-manager-$V-linux-x86_64/usr/share/icons/hicolor/256x256/apps/appimage-manager.png \\
                 ~/.local/share/icons/hicolor/256x256/apps/
 
-          这份 README 在 tar 包之外，需要从 Release 页面单独下载。
           EOF
           ls -la dist/
 
       # ── deb / rpm / arch ────────────────────────────────────────
+      # ── 源码包 ──────────────────────────────────────────────────
+      #
+      # GPL-3.0 要求分发二进制时同时提供对应源码。GitHub 每个 Release 会
+      # 自动附 Source code (zip/tar.gz)，但那是 GitHub 的自动行为，
+      # 文件名跟着 tag 走、内容也把截图和 CI 配置一并打包（反正有整棵仓库）。
+      # 这里另外给一份规范的 src.tar.gz：
+      #   · 固定命名 appimage-manager-<版本>-src.tar.gz，发行版打包脚本
+      #     （debian/watch 之类）能直接按名字取
+      #   · 用 .gitattributes 的 export-ignore 排掉 docs/（740KB 截图）、
+      #     .github/、.gitignore —— 只留能编译的最小集合
+      #   · 打完真的解开编译一遍：源码包最没意义的失败就是「解出来编不过」
+      - name: 打源码包并验证能编译
+        run: |
+          set -euo pipefail
+          V="${{ steps.ver.outputs.version }}"
+          git archive --format=tar.gz \
+              --prefix="appimage-manager-$V/" \
+              -o "dist/appimage-manager-$V-src.tar.gz" HEAD
+          ls -la "dist/appimage-manager-$V-src.tar.gz"
+
+          rm -rf /tmp/srccheck && mkdir -p /tmp/srccheck
+          tar xzf "dist/appimage-manager-$V-src.tar.gz" -C /tmp/srccheck
+          D="/tmp/srccheck/appimage-manager-$V"
+
+          for f in Makefile LICENSE src/version.vala data/style.css \
+                   packaging/nfpm.yaml scripts/make-appimage.sh \
+                   tests/selftest.vala tests/make-fixtures.sh; do
+            test -e "$D/$f" || { echo "::error::源码包缺 $f"; exit 1; }
+          done
+
+          # 截图和 CI 配置不该进来 —— export-ignore 万一被谁删掉，这里立刻响
+          test ! -d "$D/docs"    || { echo "::error::源码包里带上了 docs/（截图撑体积）"; exit 1; }
+          test ! -d "$D/.github" || { echo "::error::源码包里带上了 .github/"; exit 1; }
+
+          # 真编译一遍
+          make -C "$D" 2>&1 | tail -5
+          test -x "$D/appimage-manager" || {
+            echo "::error::源码包编译不出二进制"; exit 1; }
+          echo "源码包校验通过（$D）"
+
       - name: 安装 nfpm
         run: |
           NFPM_URL=https://nfpm.goreleaser.com/static/nfpm-2.41.0_linux_amd64.tar.gz
@@ -186,14 +250,68 @@ jobs:
           # nfpm.yaml 里那个 src 路径指的正是它。
           make install DESTDIR=build/pkg PREFIX=/usr >/dev/null
 
+          # ── 版本号必须来自 tag ──────────────────────────────────
+          #
+          # nfpm 既没有 --version 参数，配置里也不支持 {{ .Version }} 模板，
+          # packaging/nfpm.yaml 里的 version 只能写死。所以这里生成一份
+          # 临时配置，把 version 换成这次 tag 的值 ——
+          # 不然打 v1.1.0 的 tag，deb/rpm/arch 包里标的还是 1.0.0。
+          # （那个文件里甚至留了这段做法的注释，但工作流一直没实现。）
+          sed "s|^version: .*|version: $V|" nfpm.yaml > ../build/nfpm-ci.yaml
+          grep -n '^version:' ../build/nfpm-ci.yaml
+
           # 注意是 archlinux 不是 arch —— nfpm 的 packager 名字如此，
           # 写 arch 会直接报 "no packager registered for the format arch"
           for f in deb rpm archlinux; do
             echo "── $f ──"
-            /tmp/nfpm package --config nfpm.yaml \
+            /tmp/nfpm package --config ../build/nfpm-ci.yaml \
               --packager "$f" --target "$OUT"
           done
           ls -la "$OUT"
+
+      - name: 断言包里的版本号与 tag 一致
+        # 光「改对了」不够 —— 得从打好的包里**读回来**核对。
+        # 这类错一旦溜出去就是「用户装到的包自称是旧版本」，
+        # 事后排查代价极高，而这里几行就能拦住。
+        run: |
+          set -euo pipefail
+          V="${{ steps.ver.outputs.version }}"
+          # 预发布后缀在 deb 里落成 ~rc1（1.1.0~rc1），比对时统一成 base
+          BASE="${{ steps.ver.outputs.base }}"
+          fail=0
+
+          DEB=$(ls dist/*.deb | head -1)
+          DV=$(dpkg-deb -f "$DEB" Version)
+          echo "deb  版本: $DV  （期望以 $BASE 开头）"
+          case "$DV" in "$BASE"*) ;; *) echo "::error::$DEB 版本是 $DV，与 tag $V 不符"; fail=1;; esac
+
+          RPMF=$(ls dist/*.rpm | head -1)
+          RV=$(rpm -qp --qf '%{VERSION}' "$RPMF" 2>/dev/null \
+               || rpm -qp --queryformat '%{VERSION}' "$RPMF" 2>/dev/null || echo "?")
+          echo "rpm  版本: $RV  （期望以 $BASE 开头）"
+          case "$RV" in "$BASE"*) ;; *) echo "::error::$RPMF 版本是 $RV，与 tag $V 不符"; fail=1;; esac
+
+          # Arch 包的版本在 .PKGINFO 里，比 rpm 好读也更好校验
+          ARCHF=$(ls dist/*.pkg.tar.zst | head -1)
+          AV=$(tar --zstd -xOf "$ARCHF" .PKGINFO 2>/dev/null \
+               | sed -n 's/^pkgver *= *//p' | head -1)
+          echo "arch 版本: $AV  （期望以 $BASE 开头）"
+          case "$AV" in "$BASE"*) ;; *) echo "::error::$ARCHF 版本是 $AV，与 tag $V 不符"; fail=1;; esac
+
+          [ "$fail" -eq 0 ] || exit 1
+          echo "三个包的版本号都与 tag $V 一致"
+
+      - name: 生成 SHA256SUMS
+        # 校验和原先是嵌在 Release 说明的代码块里的，脚本没法直接下载核对。
+        # 做成独立资产，`sha256sum -c SHA256SUMS` 就能验全部。
+        run: |
+          set -euo pipefail
+          cd dist
+          # 排除自身，也排除那个给人看的说明文件
+          rm -f SHA256SUMS
+          sha256sum *.AppImage *.tar.gz *.deb *.rpm *.pkg.tar.zst \
+            > SHA256SUMS
+          cat SHA256SUMS
 
       - name: 校验 deb 包结构与依赖
         # 包能打出来不代表能用。这里实际解开看一眼：文件齐不齐、
@@ -246,9 +364,15 @@ jobs:
         run: |
           set -euo pipefail
           cd dist
-          # README.txt 单独放 —— 它是给人看的说明，不属于可执行内容，
-          # 塞进 tar 包里反而会挡住 usr/ 前缀的干净结构
-          ls -1 *.AppImage *.tar.gz *.deb *.rpm *.pkg.tar.zst > /tmp/artifact_list
+          # README-免安装说明.txt 和 SHA256SUMS 单独放 —— 它们是给人看的
+          # 说明与校验数据，不属于可执行内容，塞进 tar 包里反而会挡住
+          # usr/ 前缀的干净结构。
+          #
+          # 用显式清单而不是再 glob 一次：漏掉任何一项都是「资产少了但
+          # Release 看着正常」这种最难发现的错。
+          ls -1 *.AppImage *.tar.gz *.deb *.rpm *.pkg.tar.zst \
+                SHA256SUMS README-免安装说明.txt > /tmp/artifact_list
+          sort -o /tmp/artifact_list /tmp/artifact_list
           cat /tmp/artifact_list | sed 's/^/  /'
           echo "count=$(wc -l < /tmp/artifact_list)" >> "$GITHUB_OUTPUT"
 
@@ -270,6 +394,10 @@ jobs:
             echo "| \`appimage-manager_$V_amd64.deb\` | Debian / Ubuntu / Kali / Mint |"
             echo "| \`appimage-manager-$V-1.x86_64.rpm\` | Fedora / RHEL / openSUSE |"
             echo "| \`appimage-manager-$V-1-x86_64.pkg.tar.zst\` | Arch / Manjaro |"
+            echo "| \`appimage-manager-$V-src.tar.gz\` | 源码（发行版打包者用） |"
+            echo
+            echo "另有 \`SHA256SUMS\`（校验和，\`sha256sum -c SHA256SUMS\` 可验全部）"
+            echo "和 \`README-免安装说明.txt\`（tar.gz 版的用法说明）。"
             echo
             echo "原生二进制与 AppImage 都**依赖系统的 GTK3**（桌面发行版基本都有）。"
             echo "用 deb/rpm/arch 包时依赖会自动被声明并装好。"
@@ -283,10 +411,10 @@ jobs:
             echo "cd $GITHUB_REPOSITORY && git checkout $GITHUB_SHA"
             echo '```'
             echo
-            echo "SHA256："
+            echo "SHA256：见附件 `SHA256SUMS`（或展开下面的代码块）"
             echo
             echo '```'
-            cd dist && sha256sum *.AppImage *.tar.gz *.deb *.rpm *.pkg.tar.zst 2>/dev/null || true
+            cd dist && cat SHA256SUMS 2>/dev/null || true
             echo '```'
           } > "${{ github.workspace }}/RELEASE_NOTES.md"
 
@@ -303,4 +431,6 @@ jobs:
             dist/*.deb
             dist/*.rpm
             dist/*.pkg.tar.zst
+            dist/SHA256SUMS
+            dist/README-免安装说明.txt
           fail_on_unmatched_files: true

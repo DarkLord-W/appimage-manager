@@ -1,2 +1,17 @@
 * text=auto eol=lf
 *.png binary
+
+# ── 源码包排除项 ──────────────────────────────────────────────────
+#
+# git archive 会遵守这里的 export-ignore。发行版打包者拿到的
+# appimage-manager-<版本>-src.tar.gz 应该是「能编译的最小集合」，
+# 而不是整份仓库 —— 截图占 740 KB，等于把源码包撑大一倍还多，
+# 而它对编译毫无用处。
+#
+# 注意不要排除 packaging/ 和 scripts/：前者是三个发行版包的配置，
+# 后者是 AppImage 打包脚本，都在 README 的编译章节里被引用。
+
+docs/          export-ignore
+.github/       export-ignore
+.gitignore     export-ignore
+.gitattributes export-ignore
