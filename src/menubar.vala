@@ -17,7 +17,7 @@ namespace Menus {
         private unowned MainWindow win;
         private Gtk.AccelGroup accel;
         private Gtk.RadioMenuItem[] filter_items = new Gtk.RadioMenuItem[6];
-        private Gtk.CheckMenuItem? fullscreen_item = null;
+        private Gtk.CheckMenuItem? maximize_item = null;
 
         public AppMenuBar (MainWindow win, Gtk.AccelGroup accel_group) {
             this.win = win;
@@ -119,12 +119,20 @@ namespace Menus {
 
             m.append (new Gtk.SeparatorMenuItem ());
 
-            fullscreen_item = new Gtk.CheckMenuItem.with_label ("全屏");
-            fullscreen_item.add_accelerator ("activate", accel,
+            // 之前这里是「全屏」，调 Gtk.Window.fullscreen()。
+            // 那是真全屏 —— X11 协议下窗口管理器必须撤掉全部装饰，
+            // 于是标题栏连同最小化/最大化/关闭三个按钮一起消失，
+            // 用户会以为「按钮坏了」。实际需求是「铺满屏幕但保留标题栏」，
+            // 那是 maximize()，不是 fullscreen()。
+            //
+            // 快捷键用 F11 而不是更常见的 F10：GTK 的 GtkMenuBar 自带
+            // F10 绑定（聚焦菜单栏），抢过来会破坏键盘导航。
+            maximize_item = new Gtk.CheckMenuItem.with_label ("最大化");
+            maximize_item.add_accelerator ("activate", accel,
                 Gdk.Key.F11, 0, Gtk.AccelFlags.VISIBLE);
-            fullscreen_item.toggled.connect (() =>
-                win.menu_set_fullscreen (fullscreen_item.get_active ()));
-            m.append (fullscreen_item);
+            maximize_item.toggled.connect (() =>
+                win.menu_set_maximize (maximize_item.get_active ()));
+            m.append (maximize_item);
 
             m.show_all ();
             return root;
@@ -199,10 +207,10 @@ namespace Menus {
                 it.set_active (true);
         }
 
-        /** 全屏状态被外部改变时同步勾选（例如窗口管理器快捷键） */
-        public void sync_fullscreen (bool on) {
-            if (fullscreen_item != null && fullscreen_item.get_active () != on)
-                fullscreen_item.set_active (on);
+        /** 最大化状态被外部改变时同步勾选（例如双击标题栏、WM 快捷键） */
+        public void sync_maximize (bool on) {
+            if (maximize_item != null && maximize_item.get_active () != on)
+                maximize_item.set_active (on);
         }
     }
 }

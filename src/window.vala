@@ -17,6 +17,7 @@ public class MainWindow : Gtk.ApplicationWindow {
     // ── 工具栏与菜单 ──────────────────────────────────────────────
     private Gtk.Box toolbar;
     private Gtk.AccelGroup accel_group;
+    private Menus.AppMenuBar menubar;
     private Gtk.Label subtitle_label;
     private Gtk.SearchEntry search;
     private Gtk.Button refresh_btn;
@@ -108,7 +109,12 @@ public class MainWindow : Gtk.ApplicationWindow {
         // 用原生窗口装饰（不再 set_titlebar），最小化/最大化/关闭由窗口
         // 管理器绘制 —— 自绘标题栏在第三方主题（如 Windows-10）下会把
         // 这两个按钮画成空白圆圈。
-        set_wmclass ("AppImage Manager", "AppImage Manager");
+        //
+        // WM_CLASS 绝不能含空格：窗口管理器拿第二个字段（class）去匹配
+        // .desktop 文件名和图标主题里的图标名，含空格就永远匹配不上，
+        // 任务栏只好退回通用占位图标。这里两个字段都用规范化的
+        // appimage-manager，和 data/*.desktop 的 StartupWMClass 对齐。
+        set_wmclass ("appimage-manager", "appimage-manager");
 
         build_toolbar ();
         build_body ();
@@ -120,7 +126,8 @@ public class MainWindow : Gtk.ApplicationWindow {
         accel_group = new Gtk.AccelGroup ();
         add_accel_group (accel_group);
 
-        root.pack_start (new Menus.AppMenuBar (this, accel_group), false, false, 0);
+        menubar = new Menus.AppMenuBar (this, accel_group);
+        root.pack_start (menubar, false, false, 0);
         root.pack_start (toolbar, false, false, 0);
         root.pack_start (dir_bar_widget, false, false, 0);
         // 这一行控件多，窄窗口下让它横向滚动，而不是撑破最小宽度
@@ -133,6 +140,7 @@ public class MainWindow : Gtk.ApplicationWindow {
         add (root);
 
         install_css ();
+        install_app_icon ();
         install_accels ();
         connect_signals ();
 
@@ -804,6 +812,67 @@ public class MainWindow : Gtk.ApplicationWindow {
         return "";
     }
 
+    /**
+     * 给窗口装应用图标 —— 任务栏和窗口列表都靠它。
+     *
+     * 光写 icon_name = "appimage-manager" 是不够的：那要求图标已经装进
+     * 系统图标主题。在源码树里直接跑、或者用 AppImage 免安装跑的时候，
+     * 主题里根本没有这个图标名，任务栏就只剩一个通用占位方块。
+     *
+     * 所以这里按 find_css() 一样的降级顺序去找真实文件，找到就直接交给
+     * GTK —— 它会填好 _NET_WM_ICON，任务栏立刻有图，不依赖安装。
+     */
+    private static void install_app_icon () {
+        Gdk.Pixbuf? pb = null;
+
+        // 1) 图标主题：装到系统里之后走这条，最省事
+        var theme = Gtk.IconTheme.get_default ();
+        try {
+            pb = theme.load_icon ("appimage-manager", 256, 0);
+        } catch (GLib.Error e) {
+            pb = null;
+        }
+
+        // 2) 退回到显式路径。可执行文件所在目录也要看 ——
+        //    AppImage 里图标就在 AppDir 根上，和二进制平行。
+        if (pb == null) {
+            string exe_dir = "";
+            try {
+                string self = GLib.FileUtils.read_link ("/proc/self/exe");
+                if (self != "")
+                    exe_dir = GLib.Path.get_dirname (self);
+            } catch (GLib.Error e) {
+                exe_dir = "";
+            }
+
+            string[] candidates = {
+                "/usr/local/share/icons/hicolor/256x256/apps/appimage-manager.png",
+                "/usr/share/icons/hicolor/256x256/apps/appimage-manager.png",
+                "data/appimage-manager.png",
+                exe_dir != "" ? GLib.Path.build_filename (exe_dir, "appimage-manager.png") : "",
+                exe_dir != "" ? GLib.Path.build_filename (exe_dir, "..", "share", "icons",
+                                    "hicolor", "256x256", "apps",
+                                    "appimage-manager.png") : ""
+            };
+
+            foreach (string c in candidates) {
+                if (c == "" || !AppPath.exists (c))
+                    continue;
+                try {
+                    pb = new Gdk.Pixbuf.from_file_at_size (c, 256, 256);
+                    break;
+                } catch (GLib.Error e) {
+                    pb = null;
+                }
+            }
+        }
+
+        if (pb != null)
+            Gtk.Window.set_default_icon (pb);
+        else
+            warning ("未找到应用图标，任务栏会显示通用占位图标");
+    }
+
     private void install_accels () {
         // 复用菜单栏已经在用的 accel_group，避免建两个
         var accel = accel_group;
@@ -855,6 +924,10 @@ public class MainWindow : Gtk.ApplicationWindow {
             }
             return false;
         });
+
+        // 双击标题栏 / WM 快捷键也能最大化，那条路径不经过菜单，
+        // 得靠这个信号把菜单勾选同步回来。
+        window_state_event.connect (on_window_state_event);
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -2072,11 +2145,32 @@ public class MainWindow : Gtk.ApplicationWindow {
             filter_combo.set_active (mode);
     }
 
-    public void menu_set_fullscreen (bool on) {
-        if (on)
-            fullscreen ();
-        else
-            unfullscreen ();
+    public void menu_set_maximize (bool on) {
+        // 只提供最大化，不提供真全屏。
+        //
+        // fullscreen() 会让 X11 窗口管理器撤掉全部装饰（X11 协议如此），
+        // 标题栏和最小化/最大化/关闭三个按钮会一起消失。而用户想要的是
+        // 「占满屏幕但按钮还在」，那正是 maximize() 的语义。
+        if (on) {
+            if ((get_window ().get_state () & Gdk.WindowState.MAXIMIZED) == 0)
+                maximize ();
+        } else {
+            if ((get_window ().get_state () & Gdk.WindowState.MAXIMIZED) != 0)
+                unmaximize ();
+        }
+    }
+
+    /**
+     * 窗口状态变化时同步菜单里的「最大化」勾选。
+     *
+     * 双击标题栏、按窗口管理器快捷键（xfwm4 是 Super+↑）都能最大化，
+     * 那些路径不经过菜单，不监听的话勾选状态会和实际状态不一致。
+     */
+    private bool on_window_state_event (Gdk.EventWindowState ev) {
+        if (menubar != null)
+            menubar.sync_maximize (
+                (ev.new_window_state & Gdk.WindowState.MAXIMIZED) != 0);
+        return false;
     }
 
     public void menu_about () { on_menu_about (); }
@@ -2098,11 +2192,12 @@ public class MainWindow : Gtk.ApplicationWindow {
             + "Ctrl+D        添加扫描目录\n"
             + "Ctrl+,        设置\n"
             + "Ctrl+Q        退出\n"
-            + "F11           全屏\n"
+            + "F11           最大化 / 还原\n"
             + "Delete        删除选中的启动器\n"
             + "Enter         创建 / 认领 / 编辑（按当前状态）\n"
             + "Esc           关闭提示条\n"
             + "双击条目      未创建 → 创建；已创建 → 编辑\n"
+            + "双击标题栏    最大化 / 还原\n"
             + "右键条目      打开完整操作菜单");
         dlg.run ();
         dlg.destroy ();

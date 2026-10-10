@@ -43,6 +43,13 @@ public class AppMgr : Gtk.Application {
 
     public override void startup () {
         base.startup ();
+
+        // 程序名决定 GTK 自动推导出的 WM_CLASS 和默认图标名。
+        // 必须和 data/*.desktop 的 StartupWMClass / Icon= 保持一致，
+        // 否则窗口管理器和任务栏认不出这是哪个应用。
+        GLib.Environment.set_prgname ("appimage-manager");
+        GLib.Environment.set_application_name ("AppImage Manager");
+
         Gtk.IconTheme.get_default ().append_search_path (
             GLib.Path.build_filename (AppPath.icons_hicolor_dir (), "256x256", "apps"));
     }
