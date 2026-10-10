@@ -41,7 +41,26 @@
 - 删除启动器（删除前自动备份）
 - 编辑 `Name` / `Comment` / `Categories` / `Exec` / `Icon`
 - **认领**：把第三方或手工创建的 `.desktop` 纳入管理，只追加 `X-AppImage-Manager-*` 标记键，原有内容不动
+- **用内置元数据补全**：解包 AppImage，读它内置 `.desktop` 里的真实
+  名称 / 描述 / 分类 / 图标，补全已有的启动器。只替换 AppImage 里
+  确实写了的字段，且只重写值真的变了的那几行 —— 注释、空行、原始空格
+  写法、`[Desktop Action …]` 附加组全部逐字节保留。写前先备份并记入
+  事务，随时可从「修复历史」还原
 - 失效与孤儿清理
+
+### 保真原则
+
+凡是改写用户 `.desktop` 的操作（认领、修复、补全），都只动**确认要改
+的那几行**，其余逐字节保留：
+
+- 注释和空行原样留下
+- `Name = Foo` 这种带空格的非标准写法不会被「规范化」掉
+- `[Desktop Action …]` 等附加组完整保留
+- 幂等：同一个操作重复执行不会反复叠加内容
+
+走「解析成键值再整体序列化」的老路会把这些全都吃掉 —— 认领一个精心
+写好的启动器，结果注释没了、附加组整组消失，与「只追加两行标记」的
+承诺直接矛盾。所以这类操作一律走字节级插入 / 行级最小改写。
 
 ### 事务与回滚
 - 两阶段提交（WAL），每步操作可追溯
@@ -77,8 +96,8 @@
 |---|---|
 | 文件 | 添加扫描目录 `Ctrl+D` · 打开启动器目录 · 打开配置目录 · 退出 `Ctrl+Q` |
 | 编辑 | 全选 `Ctrl+A` · 取消选择 · 创建启动器 `Ctrl+N` · 修复选中项 · 认领 · 删除 `Delete` |
-| 视图 | 重新扫描 `F5` · 过滤（全部/新发现/已创建/外部/失效/可优化） · 全屏 `F11` |
-| 工具 | 健康检查 · 修复历史 · 失效与孤儿清理 · 从 AppImage 提取元数据 · 设置 `Ctrl+,` |
+| 视图 | 重新扫描 `F5` · 过滤（全部/新发现/已创建/外部/失效/可优化） · 最大化 `F11` |
+| 工具 | 健康检查 · 修复历史 · 失效与孤儿清理 · 用内置元数据补全所选启动器 · 设置 `Ctrl+,` |
 | 帮助 | 键盘快捷键 `F1` · 关于 |
 
 ### 三种操作入口
@@ -130,12 +149,18 @@
 |---|---|---|---|---|
 | `F5` / `Ctrl+R` | 重新扫描 | | `Enter` | 创建 / 认领 / 编辑 |
 | `Ctrl+A` | 全选 | | `Delete` | 删除选中的启动器 |
-| `Ctrl+F` | 聚焦搜索 | | `F11` | 全屏 |
+| `Ctrl+F` | 聚焦搜索 | | `F11` | 最大化 / 还原 |
 | `Ctrl+N` | 创建启动器 | | `F1` | 快捷键说明 |
 | `Ctrl+D` | 添加扫描目录 | | `Ctrl+Q` | 退出 |
-| `Ctrl+,` | 设置 | | 双击 | 未创建→创建；已创建→编辑 |
+| `Ctrl+,` | 设置 | | 双击条目 | 未创建→创建；已创建→编辑 |
 
 窗口最小 **620 × 400**，窄窗口下操作条自动变横向滚动。
+
+没有「全屏」—— 只有「最大化」。真全屏在 X11 下由窗口管理器负责撤掉
+全部装饰，标题栏和最小化/最大化/关闭三个按钮会一起消失，用起来像是
+按钮坏了。最大化占满屏幕但保留标题栏，那才是实际想要的效果。
+双击标题栏、或按窗口管理器的快捷键（xfwm4 是 `Super+↑`）也能最大化，
+菜单里的勾选会跟着同步。
 
 ---
 
@@ -166,7 +191,7 @@ make run      # 编译并运行
 ### 安装
 
 ```bash
-sudo make install              # 默认装到 /usr/local
+sudo make install                  # 默认装到 /usr/local
 make install PREFIX=$HOME/.local   # 或者装到用户目录
 ```
 
@@ -176,6 +201,39 @@ make install PREFIX=$HOME/.local   # 或者装到用户目录
 - `$PREFIX/share/icons/hicolor/256x256/apps/appimage-manager.png`
 
 卸载：`sudo make uninstall`
+
+### 免安装运行（打包成 AppImage）
+
+```bash
+make appimage
+# → dist/AppImage-Manager-1.0.0-x86_64.AppImage   （约 496 KiB）
+```
+
+产出一个自包含的 AppImage，`chmod +x` 后双击即可运行，不需要安装到
+任何系统目录。
+
+体积只有几百 KB，是因为它**不打包 GTK**，运行时用系统的 GTK3 ——
+所以目标机需要已装 GTK3（桌面发行版基本都有）。要完全自包含得把整个
+GTK 栈打进去，体积会涨到 100 MB 以上，还要处理 glibc 版本兼容，
+对这个工具不划算。
+
+打包不需要联网，也不需要 `appimagetool`：脚本从本机已有的任意
+type-2 AppImage 里取出运行时，配上系统自带的 `mksquashfs` 自己拼装。
+
+运行时按以下顺序找，第一个可用的胜出：
+
+1. `RUNTIME=/path/to/runtime` 环境变量
+2. 仓库里的 `runtime/appimage-runtime-x86_64`（首次成功后缓存于此）
+3. 从本机现成的 AppImage 里提取：`$APPMGR_RUNTIME_SOURCE`、然后
+   `~/Desktop/audit/dl/*.AppImage`、然后 `/tmp/*.AppImage`
+
+取运行时长度用的是 AppImage **自己报告的** `--appimage-offset`，不是
+去文件里搜 `hsqs` 魔数 —— 运行时自己的代码里就含有那 4 个字节，直接搜
+会命中假阳性，截出一个「能启动但 `--appimage-extract` 段错误」的残废
+运行时。每个候选运行时都要通过「重建后自报偏移一致 + 解包退出码为 0」
+的往返校验才会被采用。
+
+`dist/` 和 `runtime/` 已在 `.gitignore` 里。
 
 ---
 
@@ -201,7 +259,8 @@ src/
 ├── main.vala           应用入口，Gtk.Application 装配
 ├── window.vala         主窗口：列表、目录条、浮动操作条、InfoBar
 ├── dialogs.vala        编辑器 / 修复 / 认领 / 清理 / 设置 / 历史 / 进度
-├── wizard.vala         首次运行向导
+├── menubar.vala        传统菜单栏
+├── prefill.vala        从文件名 / AppImage 推导预填值
 ├── pill.vala           状态药丸的自定义渲染器
 ├── store.vala          数据模型，二维状态（匹配 × 健康）
 ├── config.vala         GKeyFile 配置持久化
@@ -209,13 +268,22 @@ src/
 ├── appimage.vala       --appimage-extract 元数据与图标提取
 ├── desktopfiles.vala   条目解析、Exec 转义、原子写、校验
 ├── rules.vala          28 条健康检查规则引擎
-├── repair.vala         三级修复模式、diff 生成、事务化执行
+├── repair.vala         三级修复模式、diff 生成、字节级改写、事务化执行
 ├── journal.vala        WAL 两阶段事务、崩溃恢复
 ├── backup.vala         备份存储、追加式历史、还原
+├── version.vala        版本号
 └── paths.vala          XDG 路径解析、文件操作兼容层
 data/
 ├── style.css           GTK3 样式表（主题自适应）
-└── appimage-manager.desktop.in
+├── appimage-manager.png            应用图标
+├── appimage-manager.desktop.in     安装版 .desktop 模板
+└── appimage-manager-appimage.desktop.in   AppImage 内嵌版 .desktop 模板
+scripts/
+└── make-appimage.sh    离线打包成 AppImage（取运行时 + mksquashfs + 拼装）
+tests/
+├── selftest.vala       引擎自测（不依赖 GUI）
+├── ui-test.sh          Xvfb + xdotool 的界面自动化测试
+└── make-fixtures.sh    生成测试用假 AppImage 与 21 个畸形 .desktop
 ```
 
 ---
@@ -236,9 +304,17 @@ data/
 
 ## 已知限制
 
-- AppImage 的 `--appimage-extract` 需要文件有执行权限；本工具会自动 `chmod +x`，但对 `/opt`、`/media` 下的文件可能需要管理员权限，届时会跳过并提示
+- AppImage 的 `--appimage-extract` 需要文件有执行权限。**本工具绝不擅自
+  改动你的 AppImage**：遇到没有执行位的文件会弹窗询问，默认选项是不
+  改动文件。对 `/opt`、`/media` 下的文件可能需要管理员权限，届时加执行
+  位会失败，会如实告知而不是假装成功
+- 解包可能很慢（大 AppImage 要几十秒到几分钟），超时可配（默认 60 秒，
+  范围 5–600），且随时可取消。取消或超时会强杀子进程，不留后台残留
 - 图标提取和解包不支持加密或分段（`.part`）的 AppImage
-- 不管理 `~/.local/share/applications` 之外的启动器目录
+- 不管理 `~/.local/share/applications` 之外的启动器目录；放在别处的
+  启动器可以认领，但扫描不会看到它（认领时会就此询问）
+- 打包出的 AppImage 依赖系统的 GTK3，不做 GTK 全量打包（详见「免安装
+  运行」一节）
 
 ---
 

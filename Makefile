@@ -28,7 +28,7 @@ VALAFLAGS := $(PKG_FLAGS) \
              --enable-deprecated \
              --disable-warnings
 
-.PHONY: all clean install uninstall run valac test selftest
+.PHONY: all clean install uninstall run valac test selftest appimage
 
 all: $(BIN)
 
@@ -100,6 +100,12 @@ uninstall:
 	rm -f $(DESTDIR)$(DATADIR)/appimage-manager/style.css
 	rmdir --ignore-fail-on-non-empty $(DESTDIR)$(DATADIR)/appimage-manager 2>/dev/null || true
 	rm -f $(DESTDIR)$(DATADIR)/icons/hicolor/256x256/apps/appimage-manager.png
+
+# ── AppImage ─────────────────────────────────────────────────────────
+# 无网络、无 appimagetool：脚本手工拼「runtime + squashfs」。
+# runtime 依次取 $RUNTIME、runtime/ 缓存，否则从现成 AppImage 抽取。
+appimage: $(BIN)
+	VERSION='$(VERSION)' bash scripts/make-appimage.sh
 
 clean:
 	@rm -f $(SELFTEST_BIN) $(VALA_STAMP)
