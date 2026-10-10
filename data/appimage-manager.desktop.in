@@ -5,8 +5,13 @@ Name=AppImage Manager
 GenericName=AppImage 管理器
 Comment=扫描 AppImage、管理目录并创建 / 修复桌面启动器
 Exec=@PREFIX@/bin/appimage-manager %U
-Icon=@PREFIX@/share/icons/hicolor/256x256/apps/appimage-manager.png
+# 用图标名而不是绝对路径：图标装进了 hicolor 主题，按名字查找才走得通
+# 主题索引，写死路径会让换前缀安装、或者主题缓存没更新时找不到图标。
+Icon=appimage-manager
 Terminal=false
 Categories=Utility;
 Keywords=appimage;desktop;launcher;entry;manager;settings;
 StartupNotify=true
+# 必须和程序里 set_wmclass() 的 class 字段一致，否则窗口管理器和任务栏
+# 认不出窗口属于哪个 .desktop，图标就会退回通用占位图。
+StartupWMClass=appimage-manager
