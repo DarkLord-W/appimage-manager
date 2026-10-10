@@ -853,6 +853,153 @@ public int main (string[] args) {
     check (ref checks, ref failures, "不改 Exec 时原行逐字保留",
            keep.contains ("Exec=/tmp/claim-test/Old Name.AppImage %U"), "");
 
+    /* ══ 16. 按键改写（补全启动器用）═════════════════════════════
+     *
+     * 「用内置元数据补全所选启动器」靠 Repair.upsert_keys 落地：只替换
+     * 指定的几个键，注释、空行、原始写法、附加组必须一个字节都不动 ——
+     * 与认领/修复是同一套保真要求。
+     * ══════════════════════════════════════════════════════════════ */
+    stdout.printf ("\n── 16. 按键改写的保真 ────────────────────\n");
+
+    string src16 =
+        "# 我手写的注释\n"
+        + "[Desktop Entry]\n"
+        + "Type=Application\n"
+        + "Name=Old Name\n"
+        + "Comment=旧描述\n"
+        + "\n"
+        + "Exec=\"/tmp/claim-test/Foo.AppImage\" %U\n"
+        + "Terminal=false\n"
+        + "\n"
+        + "[Desktop Action Keep]\n"
+        + "Name=保留我\n";
+
+    var up16 = new GLib.HashTable<string, string> (GLib.str_hash, GLib.str_equal);
+    up16.insert ("Name", "New Name");
+    up16.insert ("Comment", "新描述");
+    up16.insert ("Categories", "Graphics;");
+
+    string r16 = Repair.upsert_keys (src16, up16);
+
+    check (ref checks, ref failures, "按键改写保留注释",
+           r16.contains ("# 我手写的注释"), "");
+    check (ref checks, ref failures, "按键改写保留空行",
+           r16.contains ("\n\n"), "");
+    check (ref checks, ref failures, "按键改写保留附加组",
+           r16.contains ("[Desktop Action Keep]") && r16.contains ("Name=保留我"), "");
+    check (ref checks, ref failures, "附加组里的同名键没有被误改",
+           r16.contains ("Name=保留我") && !r16.contains ("Name=New Name\nName="), "");
+    check (ref checks, ref failures, "指定的键被替换",
+           r16.contains ("Name=New Name") && r16.contains ("Comment=新描述")
+           && !r16.contains ("Name=Old Name") && !r16.contains ("Comment=旧描述"), "");
+    check (ref checks, ref failures, "原文没有的键被补上",
+           r16.contains ("Categories=Graphics;"), "");
+    check (ref checks, ref failures, "未指定的键逐字保留",
+           r16.contains ("Type=Application") && r16.contains ("Terminal=false")
+           && r16.contains ("Foo.AppImage\" %U"), "");
+    check (ref checks, ref failures, "改写后通过 desktop-file-validate",
+           DesktopFiles.validate_content (r16) == "",
+           DesktopFiles.validate_content (r16));
+
+    // 幂等：同样的更新再来一次，内容不应再变
+    string r16b = Repair.upsert_keys (r16, up16);
+    check (ref checks, ref failures, "重复改写幂等（内容不再变化）",
+           r16b == r16, "第二次改写又动了文件");
+
+    // 值没变时应当逐字节原样返回
+    var up16c = new GLib.HashTable<string, string> (GLib.str_hash, GLib.str_equal);
+    up16c.insert ("Name", "Old Name");
+    string r16c = Repair.upsert_keys (src16, up16c);
+    check (ref checks, ref failures, "值本来就相同 → 文件逐字节不变",
+           r16c == src16, "无谓地重写了");
+
+    // 没有 [Desktop Entry] 组时不能崩，也不应凭空造内容
+    string nogroup = "Name=Broken\nType=Application\n";
+    var up16d = new GLib.HashTable<string, string> (GLib.str_hash, GLib.str_equal);
+    up16d.insert ("Name", "X");
+    string r16d = Repair.upsert_keys (nogroup, up16d);
+    check (ref checks, ref failures, "没有 [Desktop Entry] 组时不崩",
+           r16d.length > 0, "");
+
+    // 带空格的原写法在「未指定该键」时必须保留
+    string spaced = "[Desktop Entry]\nType=Application\nName = 带空格\n";
+    var up16e = new GLib.HashTable<string, string> (GLib.str_hash, GLib.str_equal);
+    up16e.insert ("Comment", "新增");
+    string r16e = Repair.upsert_keys (spaced, up16e);
+    check (ref checks, ref failures, "未指定的键保留原始空格写法",
+           r16e.contains ("Name = 带空格"), "被规范化了");
+
+    /* ══ 17. 图标安装与「内置元数据」判定 ════════════════════════
+     *
+     * 两个都踩过的坑：
+     *  1) install_icon 里 slugify 保留了「.」，之后又拼一次扩展名，
+     *     产出 krita-real.png.png 这种双扩展名。
+     *  2) AppImageInfo.name 在构造时就按文件名猜了一个，所以「name 非空」
+     *     不能说明 AppImage 里真有元数据 —— 拿它当判据会把用户手写的
+     *     Name 换成文件名猜出来的值，属于静默改用户数据。
+     * ══════════════════════════════════════════════════════════════ */
+    stdout.printf ("\n── 17. 图标安装与元数据判定 ──────────────\n");
+
+    if (sandboxed) {
+        var cfg17 = new AppConfig ();
+
+        // 造一个假的解包目录
+        string ex = GLib.Path.build_filename (sandbox, "fake-extract");
+        AppPath.ensure_dir (ex);
+        AppPath.ensure_dir (GLib.Path.build_filename (ex, "usr", "share", "icons"));
+
+        // 用真 PNG（Gdk 要能读）
+        string icon_src = GLib.Path.build_filename (ex, "myapp-icon.png");
+        bool made = false;
+        try {
+            var pb = new Gdk.Pixbuf (Gdk.Colorspace.RGB, true, 8, 16, 16);
+            pb.fill (0x3366ccff);
+            pb.savev (icon_src, "png", null, null);
+            made = true;
+        } catch { made = false; }
+
+        if (made) {
+            var info17 = new AppImageInfo ("/tmp/whatever/MyApp-1.2.AppImage");
+            info17.extract_dir = ex;
+            info17.icon_relpath = "myapp-icon.png";
+            info17.ok = true;
+
+            string? dest = AppImageExtract.install_icon (info17, cfg17);
+
+            check (ref checks, ref failures, "install_icon 返回了路径",
+                   dest != null, "返回 null");
+            if (dest != null) {
+                check (ref checks, ref failures, "图标文件名没有双扩展名",
+                       !dest.has_suffix (".png.png"),
+                       "得到 " + GLib.Path.get_basename (dest));
+                check (ref checks, ref failures, "图标文件名以单一 .png 结尾",
+                       dest.has_suffix (".png"),
+                       GLib.Path.get_basename (dest));
+                check (ref checks, ref failures, "图标文件确实落盘了",
+                       AppPath.exists (dest), dest);
+            }
+
+            // has_embedded_metadata 的默认值必须是 false：构造时按文件名
+            // 猜出来的 name 不算「内置元数据」
+            var fresh = new AppImageInfo ("/tmp/whatever/Guessed-Name-9.AppImage");
+            check (ref checks, ref failures, "新 AppImageInfo 默认没有内置元数据标记",
+                   !fresh.has_embedded_metadata, "默认为 true，会被误判");
+            check (ref checks, ref failures, "但文件名推导出的 name 仍然可用（供表单预填）",
+                   fresh.name != "", "预填用不上");
+        } else {
+            stdout.printf ("  ⚠ 跳过：无法生成测试 PNG\n");
+        }
+    }
+
+    // 新增的键要插在组尾空行**之前**，空行继续分隔下一个组
+    string tail16 = "[Desktop Entry]\nType=Application\nName=X\n\n[Desktop Action A]\nName=A\n";
+    var up16f = new GLib.HashTable<string, string> (GLib.str_hash, GLib.str_equal);
+    up16f.insert ("Comment", "新增的");
+    string r16f = Repair.upsert_keys (tail16, up16f);
+    check (ref checks, ref failures, "新增键插在组尾空行之前",
+           r16f.contains ("Comment=新增的\n\n[Desktop Action A]"),
+           "新键落在了空行后面");
+
     /* ══ 汇总 ════════════════════════════════════════════════════ */
     stdout.printf ("\n═══════════════════════════════════════════\n");
     if (failures == 0) {

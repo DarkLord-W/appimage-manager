@@ -153,7 +153,7 @@ namespace Menus {
 
             m.append (new Gtk.SeparatorMenuItem ());
 
-            m.append (item ("从 AppImage 提取内置元数据…",
+            m.append (item ("用内置元数据补全所选启动器…",
                             () => win.menu_extract_metadata ()));
 
             m.append (new Gtk.SeparatorMenuItem ());

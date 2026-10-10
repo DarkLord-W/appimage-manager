@@ -418,6 +418,11 @@ namespace Repair {
         var seen = new GLib.HashTable<string, bool> (GLib.str_hash, GLib.str_equal);
         bool in_main = false;
 
+        // Main 组里的空行先攒着不输出。等遇到下一个非空行（或组结束）再放出去，
+        // 这样新增的键会插在组尾空行**之前**，空行继续充当与下一个组的分隔 ——
+        // 和 append_markers 的处理保持一致。否则新键会孤零零地落在空行后面。
+        var pending_blanks = new GLib.StringBuilder ();
+
         // Main 组结束时，把 doc 里有、原文里没有的键补上
         void flush_added () {
             foreach (string k in doc.order) {
@@ -430,6 +435,13 @@ namespace Repair {
             }
         }
 
+        void flush_blanks () {
+            if (pending_blanks.len > 0) {
+                out.append (pending_blanks.str);
+                pending_blanks.erase ();
+            }
+        }
+
         for (uint i = 0; i < lines.length; i++) {
             string line = lines[i];
             string t = line.strip ();
@@ -437,11 +449,12 @@ namespace Repair {
             if (t.has_prefix ("[") && t.has_suffix ("]")) {
                 if (in_main) {
                     flush_added ();
+                    flush_blanks ();
                     in_main = false;
                 }
+                out.append (line).append_c ('\n');
                 if (t == "[Desktop Entry]")
                     in_main = true;
-                out.append (line).append_c ('\n');
                 continue;
             }
 
@@ -453,10 +466,11 @@ namespace Repair {
 
             // Main 组内的行
             if (t == "" || t.has_prefix ("#")) {
-                out.append (line).append_c ('\n');   // 空行/注释 → 原样
+                pending_blanks.append (line).append_c ('\n');   // 攒着，稍后放
                 continue;
             }
 
+            flush_blanks ();
             int eq = t.index_of_char ('=');
             if (eq <= 0) {
                 out.append (line).append_c ('\n');
@@ -482,8 +496,10 @@ namespace Repair {
                 out.append ("%s=%s\n".printf (key, newval));   // 变了 → 重写
         }
 
-        if (in_main)
+        if (in_main) {
             flush_added ();
+            flush_blanks ();
+        }
 
         string result = out.str;
         if (!ends_nl && result.has_suffix ("\n"))
@@ -691,6 +707,28 @@ namespace Repair {
 
         string result = string.joinv ("\n", out_lines.steal ());
         return ends_nl ? result + "\n" : result;
+    }
+
+    /* ── 按键改写：只动指定键，其余逐字节保留 ─────────────────────── */
+
+    /**
+     * 把 [Desktop Entry] 组里指定键的值替换掉，其余内容逐字节保留。
+     *
+     * 和 patch_original 是同一套思路，只是入口从「修复计划」换成了
+     * 「给我几个键值」：注释、空行、原始写法、[Desktop Action …] 附加组
+     * 全都不碰，只重写值确实变了的那几行；原文里没有的键补在组末尾。
+     *
+     * updates 的键是纯键名（"Name" / "Comment" …），值是新值。
+     *
+     * 注意：原文若没有 [Desktop Entry] 组，这里改不动任何东西，
+     * 会原样返回 —— 调用方应该自己比对前后是否相同来判断有没有生效。
+     */
+    public static string upsert_keys (string original,
+                                      GLib.HashTable<string, string> updates) {
+        var doc = parse_doc (original);
+        foreach (string k in updates.get_keys ())
+            doc.set ("Desktop Entry", k, updates.lookup (k));
+        return patch_original (original, doc);
     }
 
     /* ── 差异生成 ────────────────────────────────────────────────── */

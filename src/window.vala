@@ -1878,6 +1878,197 @@ public class MainWindow : Gtk.ApplicationWindow {
         });
     }
 
+    /**
+     * 从 AppImage 解包读内置元数据，用它补全「已经有启动器」的条目。
+     *
+     * 创建对话框里那个「尝试提取内置元数据」只服务还没创建的条目；
+     * 启动器一旦建好，AppImage 里写着的真实名称 / 分类 / 图标就再也用不上。
+     * 菜单里原来那条同名项只弹一句「已移到创建对话框里」—— 等于把用户
+     * 指去一条走不通的路。这里把它接成真功能。
+     *
+     * 复用修复流程那一套：先备份、再原子写、最后记事务，所以随时能还原。
+     */
+    private void do_extract_metadata (AppEntry[] targets) {
+        var dlg = Dialogs.progress (this, "正在提取内置元数据");
+
+        int total = targets.length;
+        dlg.set_progress (0, total, "");
+
+        // 和 do_extract_icons 一样：targets 是借用参数，而线程闭包会跨过
+        // 本函数的生命周期。Vala 的闭包只复制指针、不接管所有权，直接
+        // 捕获会在调用方返回后悬空 —— 队列必须自己持有一份。
+        var queue = new GenericArray<AppEntry> ();
+        foreach (var e in targets)
+            queue.add (e);
+
+        int done = 0;
+        int fails = 0;
+        int unchanged = 0;
+
+        var cancel = new GLib.Cancellable ();
+        uint watch_id = GLib.Timeout.add (200, () => {
+            if (dlg.cancelled) {
+                cancel.cancel ();
+                return false;
+            }
+            return true;
+        });
+
+        GLib.Thread<void*> t = new GLib.Thread<void*> ("extract-meta", () => {
+            foreach (var e in queue) {
+                if (dlg.cancelled)
+                    break;
+
+                string nm = e.basename;
+                int seq = done + fails + unchanged;
+                GLib.Idle.add (() => { dlg.set_progress (seq, total, nm); return false; });
+
+                string work = GLib.Path.build_filename (
+                    AppPath.tmp_extract_dir (),
+                    "%s-%u".printf (e.get_slug (),
+                                    (uint)(GLib.get_real_time () % 100000)));
+
+                var info = AppImageExtract.run (e.path, work, cancel,
+                                                config.extract_timeout ());
+                bool ok = info.ok;
+                string err = info.error;
+
+                string? icon = null;
+                if (ok)
+                    icon = AppImageExtract.install_icon (info, config);
+
+                // 只把 AppImage 里**确实写着**的字段拿去覆盖。
+                //
+                // 关键：不能用 name != "" 当判据 —— AppImageInfo 在构造时
+                // 就按文件名猜了一个 name，所以它永远非空。只看这个的话，
+                // 一个压根没带 .desktop 的 AppImage 也会把用户手写的
+                // Name 悄悄换成由文件名猜出来的值。必须看 has_embedded_metadata。
+                var updates = new GLib.HashTable<string, string> (GLib.str_hash, GLib.str_equal);
+                bool have_meta = ok && info.has_embedded_metadata;
+                if (have_meta) {
+                    if (info.name != "")
+                        updates.insert ("Name", info.name);
+                    if (info.comment != "")
+                        updates.insert ("Comment", info.comment);
+                    if (info.categories != "")
+                        updates.insert ("Categories", info.categories);
+                    if (info.startup_wm_class != "")
+                        updates.insert ("StartupWMClass", info.startup_wm_class);
+                }
+                if (icon != null)
+                    updates.insert ("Icon", icon);
+                info.cleanup_extract ();
+
+                if (!ok) {
+                    fails++;
+                    string msg = err != "" ? err : "未能读取到内置元数据";
+                    GLib.Idle.add (() => { dlg.log_fail (nm, msg); return false; });
+                    continue;
+                }
+
+                if (!have_meta && icon == null) {
+                    unchanged++;
+                    GLib.Idle.add (() => {
+                        dlg.log_fail (nm, "这个 AppImage 里没有内置 .desktop，"
+                                          + "也没有可提取的图标 —— 没有可用信息");
+                        return false;
+                    });
+                    continue;
+                }
+
+                string? desktop = e.entry != null ? e.entry.file_path : null;
+                if (desktop == null || !AppPath.exists (desktop)) {
+                    fails++;
+                    GLib.Idle.add (() => {
+                        dlg.log_fail (nm, "找不到对应的 .desktop 文件");
+                        return false;
+                    });
+                    continue;
+                }
+
+                string original = "";
+                try {
+                    GLib.FileUtils.get_contents (desktop, out original);
+                } catch (GLib.Error ex) {
+                    original = "";
+                }
+
+                string patched = Repair.upsert_keys (original, updates);
+                if (patched == original) {
+                    unchanged++;
+                    GLib.Idle.add (() => {
+                        dlg.log_done (nm + " —— 内置信息与现有内容一致，未改动");
+                        return false;
+                    });
+                    continue;
+                }
+
+                // 写之前先验：宁可不改，也不要把一个坏文件留给用户
+                string verr = DesktopFiles.validate_content (patched);
+                if (verr != "") {
+                    fails++;
+                    GLib.Idle.add (() => {
+                        dlg.log_fail (nm, "改完通不过 desktop-file-validate，已放弃");
+                        return false;
+                    });
+                    continue;
+                }
+
+                var tx = new Journal.Tx ();
+                tx.txid = Journal.new_txid ();
+                tx.operation = "extract-meta";
+                tx.started_at = Journal.now_iso ();
+
+                var jit = config.backup_enabled ()
+                    ? Backup.backup_file (tx, desktop)
+                    : new Journal.Item ();
+                jit.new_path = desktop;
+
+                string? werr;
+                DesktopFiles.write_atomic (desktop, patched, out werr);
+                if (werr != null) {
+                    fails++;
+                    string wmsg = werr;
+                    GLib.Idle.add (() => {
+                        dlg.log_fail (nm, "写入失败：" + wmsg);
+                        return false;
+                    });
+                    continue;
+                }
+
+                jit.actions = { "fix" };
+                jit.status = "done";
+                jit.sha256_after = Journal.sha256 (desktop);
+                tx.set_items ({ jit });
+                tx.write_journal ();
+                tx.commit ();
+
+                done++;
+                GLib.Idle.add (() => { dlg.log_done (nm); return false; });
+            }
+
+            GLib.Idle.add (() => {
+                GLib.Source.remove (watch_id);
+                bool was_cancelled = dlg.cancelled;
+                dlg.finish ();
+
+                if (was_cancelled)
+                    return false;
+
+                DesktopFiles.refresh_menu (config.should_update_database ());
+                store.rescan ();
+
+                if (fails == 0 && unchanged == 0)
+                    show_info ("✓ 已用 AppImage 内置信息补全 %d 个启动器".printf (done));
+                else
+                    show_msg ("补全完成：更新 %d 个，无需改动 %d 个，失败 %d 个"
+                              .printf (done, unchanged, fails));
+                return false;
+            });
+            return null;
+        });
+    }
+
     private void do_test (AppEntry e) {
         var res = AppImageExtract.test_launch (e.path, 10000);
 
@@ -2176,9 +2367,25 @@ public class MainWindow : Gtk.ApplicationWindow {
     public void menu_about () { on_menu_about (); }
 
     public void menu_extract_metadata () {
-        show_msg ("「从 AppImage 提取内置元数据」已移到创建对话框里：\n"
-                  + "选中条目 → ⚡ 创建（或右键 → 创建启动器），"
-                  + "在对话框里点同名的按钮即可。");
+        // 这个入口原来只弹一句「已移到创建对话框里」—— 点了等于没点，还会
+        // 把用户指去一条走不通的路。现在它真的干活：解包 AppImage，读出
+        // 内置的名称 / 分类 / 图标，用来补全已经存在的启动器。
+        var all = resolve_targets ();
+        var targets = new GenericArray<AppEntry> ();
+        foreach (var e in all)
+            if (e.match == MatchState.REGISTERED || e.match == MatchState.EXTERNAL)
+                targets.add (e);
+
+        if (targets.length == 0) {
+            show_msg ("这个功能要用 AppImage 内置的信息去补全「已有的启动器」，"
+                      + "所以得先挑出至少一个已创建或外部创建的条目。\n\n"
+                      + "· 条目状态是「新发现」→ 请改用「创建」，"
+                      + "创建对话框里也有同一个提取按钮。\n"
+                      + "· 还没选中任何条目 → 先勾选或点选一行。");
+            return;
+        }
+
+        do_extract_metadata (targets.steal ());
     }
 
     public void menu_shortcuts () {

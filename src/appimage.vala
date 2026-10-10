@@ -17,6 +17,16 @@ public class AppImageInfo : GLib.Object {
     public string error = "";
     public bool   ok = false;
 
+    /**
+     * 是否真的从 AppImage 里读到了内置 .desktop。
+     *
+     * 必须单独记这个标记：name 在构造时就按文件名猜了一个（见下面构造
+     * 函数），所以「name 非空」根本不能说明 AppImage 里有元数据。
+     * 调用方若要拿这些值去覆盖已有文件，必须先看这个标记 —— 否则
+     * 一个压根没带 .desktop 的 AppImage 也会把用户手写的 Name 冲掉。
+     */
+    public bool has_embedded_metadata = false;
+
     public AppImageInfo (string path) {
         appimage_path = path;
         name = AppPath.display_name_from_file (GLib.Path.get_basename (path));
@@ -264,6 +274,7 @@ public const int DEFAULT_EXTRACT_TIMEOUT_SEC = 60;
         if (entry == null)
             return;
 
+        info.has_embedded_metadata = true;
         info.name             = entry.name != "" ? entry.name : info.name;
         info.generic_name     = entry.generic_name;
         info.comment          = entry.comment;
@@ -382,10 +393,18 @@ public const int DEFAULT_EXTRACT_TIMEOUT_SEC = 60;
         string ext = icon_extension (src);
         string slug = AppPath.slugify (GLib.Path.get_basename (info.appimage_path));
 
-        // AppImage 里的文件名通常已含完整名称，用它更不容易撞名
+        // AppImage 里的文件名通常已含完整名称，用它更不容易撞名。
+        // 注意要把扩展名先剥掉 —— slugify 会保留「.」，而下面拼目标名时
+        // 又要再加一次 ext，不剥的话就会得到 krita-real.png.png 这种
+        // 双扩展名，图标名虽然还能用，但一眼就是坏的。
         string icon_base = GLib.Path.get_basename (src);
-        if (!icon_base.has_prefix ("."))   // .DirIcon → 用 AppImage 自己的名字
-            slug = AppPath.slugify (icon_base);
+        if (!icon_base.has_prefix (".")) {   // .DirIcon → 用 AppImage 自己的名字
+            string stem = icon_base;
+            int dot = icon_base.last_index_of_char ('.');
+            if (dot > 0)
+                stem = icon_base.substring (0, dot);
+            slug = AppPath.slugify (stem);
+        }
 
         string dest_dir = cfg.icon_dir ();
         if (!AppPath.ensure_dir (dest_dir))
