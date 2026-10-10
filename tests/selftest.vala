@@ -1000,6 +1000,67 @@ public int main (string[] args) {
            r16f.contains ("Comment=新增的\n\n[Desktop Action A]"),
            "新键落在了空行后面");
 
+    /* ══ 18. 路径规范化（符号链接）═══════════════════════════════
+     *
+     * 打包时发现：AppPath.canonical() 遇到软链接会返回垃圾（有报告称
+     * 只剩 4 字节）。canonical() 是「两个路径是否指同一个文件」的判据，
+     * 出问题会导致认领/关联匹配全线失灵。这里钉死它的行为。
+     * ══════════════════════════════════════════════════════════════ */
+    stdout.printf ("\n── 18. 路径规范化 ────────────────────────\n");
+
+    if (sandboxed) {
+        string real_dir = GLib.Path.build_filename (sandbox, "canon-real");
+        AppPath.ensure_dir (real_dir);
+        string real_file = GLib.Path.build_filename (real_dir, "Target.AppImage");
+        GLib.FileUtils.set_contents (real_file, "x");
+
+        string link_dir = GLib.Path.build_filename (sandbox, "canon-link");
+        GLib.FileUtils.remove (link_dir);
+        try {
+            GLib.FileUtils.symlink (real_dir, link_dir);
+        } catch { }
+
+        string link_file = GLib.Path.build_filename (link_dir, "Target.AppImage");
+
+        // 普通路径
+        string c1 = AppPath.canonical (real_file);
+        check (ref checks, ref failures, "canonical 对普通路径返回合理结果",
+               c1 == AppPath.canonical (real_file) && c1 != "",
+               "得到 \"" + c1 + "\"");
+        check (ref checks, ref failures, "canonical 不返回垃圾（长度合理）",
+               c1.length >= real_file.length - 8,
+               "长度 %d vs 期望 ~%d".printf (c1.length, real_file.length));
+
+        // 软链接目录下的文件
+        string c2 = AppPath.canonical (link_file);
+        check (ref checks, ref failures, "canonical 解析软链接目录后得到真实路径",
+               c2 == c1,
+               "软链接得到 \"" + c2 + "\"，真实路径 \"" + c1 + "\"");
+        check (ref checks, ref failures, "canonical 结果不含软链接目录名",
+               !c2.contains ("canon-link"),
+               c2);
+
+        // 路径本身是软链接
+        string link_self = GLib.Path.build_filename (sandbox, "SelfLink.AppImage");
+        GLib.FileUtils.remove (link_self);
+        try {
+            GLib.FileUtils.symlink (real_file, link_self);
+        } catch { }
+        string c3 = AppPath.canonical (link_self);
+        check (ref checks, ref failures, "canonical 解析文件本身是软链接的情况",
+               c3 == c1, "得到 \"" + c3 + "\"");
+
+        // 指向不存在的目标时不应崩，且应返回绝对路径
+        string dangling = GLib.Path.build_filename (sandbox, "Dangling.AppImage");
+        GLib.FileUtils.remove (dangling);
+        try {
+            GLib.FileUtils.symlink ("/nonexistent/nope", dangling);
+        } catch { }
+        string c4 = AppPath.canonical (dangling);
+        check (ref checks, ref failures, "canonical 对悬空软链接不崩且返回绝对路径",
+               c4.has_prefix ("/"), "得到 \"" + c4 + "\"");
+    }
+
     /* ══ 汇总 ════════════════════════════════════════════════════ */
     stdout.printf ("\n═══════════════════════════════════════════\n");
     if (failures == 0) {

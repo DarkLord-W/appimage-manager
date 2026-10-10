@@ -120,28 +120,66 @@ namespace AppPath {
         return resolve_symlinks (abs);
     }
 
-    /** 逐级解析路径中的软链接；无法解析时原样返回 */
+    /**
+     * 解析路径中的软链接（等价于 realpath，但失败时优雅退回）。
+     *
+     * 逐个路径分量解析，而不是只对整条路径调一次 read_link ——
+     * 因为「软链接目录里的普通文件」这种情况，文件自己并不是软链接，
+     * 只看它会完全解析不出来（原来就是这么漏的）。
+     *
+     * 两个都踩过的坑：
+     *  1) 只解析最后一级 → 软链接目录下的文件解析不出来。
+     *  2) 局部变量必须带初值声明（string t = ""）。只写 `string t;`
+     *     时 Vala 把它当借用引用，read_link 返回的字符串随即被释放，
+     *     再读 t 就是读已释放内存 —— 实测得到的是乱码。
+     *
+     * 读不出软链接（不是软链接、或目标不存在）时，该分量原样保留，
+     * 所以悬空软链接也能安全返回一个绝对路径。
+     */
     private string resolve_symlinks (string path) {
-        // 最多跟随 40 层，防止符号链接成环导致死循环
-        for (int depth = 0; depth < 40; depth++) {
-            string dir = GLib.Path.get_dirname (path);
+        string cur = path;
+        if (!GLib.Path.is_absolute (cur))
+            cur = GLib.Filename.canonicalize (cur, null);
 
-            string target;
-            try {
-                target = GLib.FileUtils.read_link (path);
-            } catch {
-                return path;     // 不是软链接，或读不出来
+        string acc = "/";
+        int hops = 0;
+
+        foreach (string part in cur.split ("/")) {
+            if (part == "" || part == ".")
+                continue;
+
+            if (part == "..") {
+                acc = GLib.Path.get_dirname (acc);
+                continue;
             }
 
-            if (target == null || target == "")
-                return path;
+            string next = GLib.Path.build_filename (acc, part);
 
-            if (!GLib.Path.is_absolute (target))
-                target = GLib.Filename.canonicalize (GLib.Path.build_filename (dir, target), null);
+            // 这一级可能是软链接，跟着走；链上每一环都可能是软链接
+            for (int guard = 0; guard < 40; guard++) {
+                string tgt = "";
+                try {
+                    tgt = GLib.FileUtils.read_link (next);
+                } catch {
+                    tgt = "";
+                }
 
-            path = target;
+                if (tgt == "")
+                    break;      // 不是软链接 → 这一级定了
+
+                next = GLib.Path.is_absolute (tgt)
+                    ? GLib.Filename.canonicalize (tgt, null)
+                    : GLib.Filename.canonicalize (
+                          GLib.Path.build_filename (acc, tgt), null);
+
+                if (++hops > 40)
+                    return cur;    // 疑似成环，放弃
+            }
+
+            acc = next;
         }
-        return path;
+
+        return GLib.Filename.canonicalize (acc, null);
     }
 
     public string expand_tilde (string path) {
