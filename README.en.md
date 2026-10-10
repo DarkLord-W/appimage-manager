@@ -141,6 +141,10 @@ diff preview before anything is written.
   need nothing extra installed
 - A missing translation **falls back to Chinese rather than rendering blank** —
   there is never an empty cell in the UI
+- GTK's own widgets (file chooser, colour chooser) follow along too: `LANGUAGE`
+  is set before GTK initialises, otherwise you get the jarring combination of a
+  Chinese interface popping up an English file dialog — which is exactly what
+  happened in testing
 - Two self-test gates guard this: translated placeholders must match the Chinese
   one-for-one (this is what prevents a `printf` overrun), and every Chinese
   string in the source must either be wrapped in `I18n.s()` or be on an explicit
@@ -239,8 +243,9 @@ Clicking `+ Create` opens a dialog pre-filled with heuristics for you to confirm
 - **Name** is derived from the filename (`Obsidian-1.5.3-x86_64.AppImage` →
   `Obsidian`)
 - **Command** is already escaped per the XDG spec
-- **Icon** defaults to empty; click "Choose…" to pick one (it's copied into the
-  icon cache)
+- **Icon** defaults to empty; click "Choose…" to pick a file from disk
+  (png/svg/xpm, copied into the icon cache) with a live 32 px preview. The same
+  picker is available when editing an existing launcher
 - **Categories** is an editable dropdown that suggests by keyword
   (`krita` → `Graphics;`)
 - The right-hand side **previews the final `.desktop` content** in real time
