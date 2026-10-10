@@ -1,7 +1,27 @@
 name: CI
 
-# 每次 push 与 PR 都跑。三道闸门依次是：编译、引擎自测、界面自动化。
-# 任何一道失败就不往下走 —— 界面测试依赖编译产物，产物坏了测它没意义。
+# 每次 push 与 PR 都跑：编译 + 253 项引擎自测 + 打包可用性检查。
+#
+# 为什么**不**在这里跑界面自动化：
+#
+#   1. 时间对不上。那个 21 步套件本地实测要 55 分钟以上，而这里的
+#      timeout-minutes 只有 15 —— 它会在 CI 上被超时杀掉，然后报一个
+#      跟代码毫无关系的红。把超时调到 1 小时只是把问题藏起来：
+#      push 一次要等一小时才有反馈。
+#
+#   2. 这类测试天生脆。它靠像素扫描数行数/数菜单项、硬编码坐标、
+#      大量 sleep 与重试。光是这一轮开发就修了三处标定过期：
+#      操作条按钮坐标（emoji 标签换成图标后整排位移）、亮度阈值 55%
+#      （禁用项的灰字被漏数）、「关于」标题（GTK 翻译生效后变中文）。
+#      每改一次界面都可能要重新标定 —— 当门禁会把发布卡在无关的事情上。
+#
+#   3. 它挡不住的问题，引擎自测基本都能挡。真正只有界面测试能发现的
+#      （比如按钮点了没反应），值得单独跑一次，不值得每次 push 都跑。
+#
+# 界面测试挪到了 ui-test.yml：手动触发 + 每周定时一次，失败不影响任何东西。
+# 发布流程（release.yml）里跑的是产物验证 —— 那验的是「AppImage 能不能
+# 解开并运行、deb 的 Depends 对不对、版本号与 tag 是否一致」，是发布的门槛，
+# 跟这里的测试不是一回事。
 
 on:
   push:
@@ -19,9 +39,11 @@ permissions:
 
 jobs:
   verify:
-    name: 编译 + 自测 + 界面自动化
+    name: 编译 + 引擎自测
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 实测这套跑完不到 2 分钟（含 apt），15 分钟留了很宽的余量。
+    # 真超时说明是别的问题（比如 apt 源挂了），不是任务本身慢。
+    timeout-minutes: 15
 
     steps:
       - name: 检出代码
@@ -31,7 +53,7 @@ jobs:
       #   valac               Vala 编译器
       #   libgtk-3-dev        GTK3 头文件与库
       #   libjson-glib-dev    json-glib（引擎的事务日志用它）
-      #   desktop-file-utils  desktop-file-validate（自测与界面测试都要）
+      #   desktop-file-utils  desktop-file-validate（自测里校验生成的 .desktop）
       - name: 安装编译依赖
         run: |
           sudo apt-get update
@@ -53,46 +75,12 @@ jobs:
           }
           ls -la appimage-manager
 
+      # 夹具由 make selftest 按需自动生成（Makefile 里有兜底），
+      # 所以这里不用单独跑一行 make-fixtures.sh。
       - name: 引擎自测
-        # 排除 GUI 文件，只测核心引擎。不依赖 X，能跑在任何 runner 上。
+        # 只测核心引擎，不含 GUI 文件。不依赖 X，能跑在任何 runner 上，
+        # 也不依赖任何图形工具 —— 这里跑的 253 项就是全量。
         run: make selftest
-
-      # 生成测试夹具：假 AppImage + 21 个畸形 .desktop。
-      # 自测和界面测试都要用，放在这一步产出一次。
-      - name: 生成测试夹具
-        run: |
-          tests/make-fixtures.sh
-          echo "AppImage 夹具: $(ls /tmp/appmgr-fixtures/apps 2>/dev/null | wc -l) 个"
-          echo ".desktop 夹具: $(find /tmp/appmgr-fixtures -name '*.desktop' | wc -l) 个"
-
-      # 界面自动化测试。工具缺失时 ui-test.sh 自己会 SKIP 并退 0，
-      # 所以这里先装齐 —— 装了它就真的会跑，而不是静默跳过。
-      #
-      #   xvfb          虚拟 X server（真机没有 X）
-      #   xfwm4         窗口管理器。没有它 GTK 窗口拿不到装饰，
-      #                  最大化、右键菜单这类交互全部测不了
-      #   xdotool       模拟键鼠
-      #   imagemagick   import（截图）与 identify（像素检查）
-      #   xclip         剪贴板（部分用例要用）
-      - name: 安装界面测试依赖
-        run: |
-          sudo apt-get install -y --no-install-recommends \
-            xvfb xfwm4 xdotool imagemagick xclip
-
-      - name: 界面自动化测试
-        run: |
-          bash tests/ui-test.sh "${{ github.workspace }}/ui-test-out"
-
-      # 界面测试失败时截图就在这里。没这一步，失败只能看到一行日志，
-      # 还得本地复现一遍才知道长什么样 —— 这是 UI 测试最常见的翻车方式。
-      - name: 上传界面测试截图（失败时）
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ui-test-screenshots
-          path: ui-test-out/
-          retention-days: 14
-          if-no-files-found: ignore
 
       - name: 上传编译日志（失败时）
         if: failure()

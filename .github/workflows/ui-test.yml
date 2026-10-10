@@ -1,0 +1,101 @@
+name: UI Test
+
+# 21 步界面自动化：开真窗口、模拟键鼠、截屏做像素断言、检查落盘文件。
+#
+# 为什么单独一个 workflow，而不是挂在 ci.yml 上每次 push 都跑：
+#
+#   1. 它慢。本地实测一轮要 55 分钟以上（21 步里有大量 sleep 和最长
+#      24 次的重试等待），而 ci.yml 的 timeout 只有 15 分钟 —— 放进去
+#      它会被超时杀掉，报一个跟代码无关的红。
+#
+#   2. 它脆。断言建立在「像素扫描数行数/数菜单项」「硬编码坐标」上，
+#      每改一次界面都可能要重新标定。开发这一轮就修了三处：
+#      操作条按钮坐标（emoji 标签换成图标后整排位移）、popup 亮度阈值
+#      （禁用项的灰字被漏数）、「关于」标题（GTK 翻译生效后变中文）。
+#      当门禁会把发布卡在无关的事情上。
+#
+#   3. 它挡的问题类型窄。真正只有界面测试能发现的（按钮点了没反应、
+#      取消关不掉窗口、提示条文字看不清），值得定期跑一次，
+#      不值得每次 push 都跑。引擎自测（253 项）在 ci.yml 里挡着其余的。
+#
+# 所以：手动触发 + 每周定时一次。它红不影响 CI，也不影响发布。
+#
+# 触发方式：
+#   GitHub → Actions → UI Test → Run workflow
+#   或命令行：gh workflow run ui-test.yml
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 每周一 03:00 UTC（北京时间 11:00）跑一次，
+    # 这样「上游 GTK 主题/窗口管理器升级把断言搞挂」能在一周内被发现。
+    - cron: '0 3 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  ui:
+    name: 21 步界面自动化
+    runs-on: ubuntu-latest
+    # 单独跑，不用抢 ci.yml 那 15 分钟的预算。本地 55 分钟，
+    # runner 上通常更快，45 分钟留了余量。
+    timeout-minutes: 45
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装编译依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            valac \
+            libgtk-3-dev \
+            libjson-glib-dev \
+            desktop-file-utils
+
+      - name: 编译
+        run: |
+          make 2>&1 | tee build.log
+          test "$(grep -c 'error:' build.log)" -eq 0 || {
+            echo "::error::编译失败"
+            grep -B2 -A4 'error:' build.log | head -60
+            exit 1
+          }
+
+      # 工具必须装齐。ui-test.sh 在缺工具时会**跳过并退 0**，
+      # 那样这里会显示一个绿色的假通过 —— 比红更糟。
+      #
+      #   xvfb          虚拟 X server（runner 上没有 X）
+      #   xfwm4         窗口管理器。没有它 GTK 窗口拿不到装饰，
+      #                  最大化、右键菜单这类交互全测不了
+      #   xdotool       模拟键鼠
+      #   imagemagick   import（截图）与 identify（像素检查）
+      #   xclip         剪贴板（复制路径那条用例要用）
+      - name: 安装界面测试依赖
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+            xvfb xfwm4 xdotool imagemagick xclip
+
+      # 用编译出来的二进制，而不是脚本里那个默认的 /tmp 快照 ——
+      # 默认值是本机开发时用的，CI 上不存在。
+      # 夹具不用单独生成：ui-test.sh 发现缺了自己会调 make-fixtures.sh。
+      - name: 界面自动化测试
+        run: |
+          bash tests/ui-test.sh "${{ github.workspace }}/ui-test-out"
+        env:
+          APPMGR_BIN: ${{ github.workspace }}/appimage-manager
+
+      # 截图**无论成败都传**。界面测试失败时，一行日志基本说明不了问题，
+      # 得看到那一刻的窗口长什么样才知道是哪一步偏了。
+      - name: 上传截图与日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-test-output
+          path: |
+            ui-test-out/
+            build.log
+          retention-days: 14
+          if-no-files-found: ignore

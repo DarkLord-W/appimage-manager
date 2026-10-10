@@ -330,8 +330,24 @@ make selftest        # 253 engine self-tests, no graphical environment needed
 tests/ui-test.sh     # 21 UI automation steps + a click-stability sweep over every button
 ```
 
-CI runs exactly these two. When a tool is missing, `ui-test.sh` skips and exits
-0, so an incomplete local setup is never mistaken for a failure.
+In CI the two are **deliberately separate**:
+
+| Workflow | Trigger | What it runs | Time |
+|---|---|---|---|
+| `ci.yml` | every push / PR | build + 253 engine self-tests + packaging check | ~2 min |
+| `ui-test.yml` | manual / weekly | 21 UI automation steps | ~50 min |
+| `release.yml` | pushing a `v*` tag | build + self-tests + packaging + **artifact verification** | ~5 min |
+
+The UI suite is kept off the per-push path for three reasons: it is slow (over
+55 minutes locally, so it would be killed by the 15-minute job timeout and report
+a false failure); it is brittle (it asserts on pixel scans and hard-coded
+coordinates, so any UI change may require recalibration); and the class of bug it
+catches is narrow — the ones only it can find are worth running regularly, not on
+every push.
+
+When a tool is missing, `ui-test.sh` **skips and exits 0**, so an incomplete local
+setup is never mistaken for a failure. That is also exactly why `ui-test.yml` has
+to install every tool — otherwise it would hand back a green false pass.
 
 ### Build
 
