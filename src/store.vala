@@ -291,21 +291,55 @@ public class Store : GLib.Object {
         detect_broken ();
     }
 
-    /** 找出 Exec 指向不存在文件的条目 */
+    /**
+     * 找出 Exec 指向不存在文件的启动器，并把它们也放进列表。
+     *
+     * 原先只把结果塞进 broken_entries，列表里一份都没有 —— 于是「失效」
+     * 这个过滤器永远是空的，用户点进去看到一片空白，也没有任何解释。
+     * window.vala 里本来就有 MatchState.BROKEN 的分支（统计、操作条状态），
+     * 说明设计上它们本就该出现在列表里，只是这一步没接上。
+     */
     private void detect_broken () {
         DesktopFiles.Entry[] broken = {};
         foreach (var d in all_desktop) {
             if (d.bound_appimage != null)
                 continue;    // 已经关联上了
+
             if (d.exec_target == null || d.exec_target == "")
                 continue;
-            if (!d.exec_target.has_suffix (".appimage"))
+
+            // 扩展名比较要大小写不敏感。scanner 那边用 down() 统一过，
+            // 这里原先却硬比 ".appimage"，于是 Foo.APPIMAGE 这种全大写的
+            // 启动器失效了也认不出来 —— 夹具里就有这么一个用例。
+            bool looks_like_appimage =
+                d.exec_target.down ().has_suffix (".appimage");
+
+            // 带本工具标记键的启动器一定是我们的，不管 Exec 写成什么，
+            // 只要目标没了就算失效。
+            if (!looks_like_appimage && !d.is_managed)
                 continue;
+
             // Exec 目标已消失 → 失效
-            if (!AppPath.exists (d.exec_target))
-                broken += d;
+            if (AppPath.exists (d.exec_target))
+                continue;
+
+            broken += d;
         }
         broken_entries = broken;
+
+        // 把它们也放进列表，让「失效」过滤器有东西可显示。
+        // 注意这些条目没有对应的 AppImage 文件：size 为 0，缩略图为 null，
+        // 界面按 match == BROKEN 分支处理。
+        foreach (var d in broken) {
+            var e = new AppEntry (d.exec_target);
+            e.match = MatchState.BROKEN;
+            e.entry = d;
+            e.size = 0;
+            e.health = HealthState.UNKNOWN;
+            if (d.name != "")
+                e.meta_name = d.name;
+            entries.append (e);
+        }
     }
 
     /* ── 查询辅助 ────────────────────────────────────────────────── */
