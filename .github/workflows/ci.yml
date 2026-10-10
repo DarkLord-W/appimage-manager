@@ -111,36 +111,63 @@ jobs:
 
       - name: 安装 nfpm
         run: |
-          NFPM_URL=https://nfpm.goreleaser.com/static/nfpm-2.41.0_linux_amd64.tar.gz
-          curl -sSL "$NFPM_URL" | tar -xz -C /tmp nfpm
+          set -euo pipefail
+
+          # nfpm 只发布在 GitHub Releases 上，没有 apt 包。
+          #
+          # URL 里的大小写是有讲究的：资产名是 nfpm_<版本>_Linux_x86_64.tar.gz
+          # （大写 L、大写 X）。老工作流用的是
+          #   https://nfpm.goreleaser.com/static/nfpm-2.41.0_linux_amd64.tar.gz
+          # 那个 GoReleaser static 托管早就下线了，现在返回 404 的 HTML 页面。
+          #
+          # 所以下面第一件事是给 curl 加 -f（遇 4xx/5xx 直接失败）。
+          # 少了它，404 的 HTML 会顺着管道喂给 tar，报出来的是
+          # 「gzip: stdin: not in gzip format」——指错方向的错误信息，
+          # 真正的原因（URL 404 了）反而看不见。
+          V=2.47.0
+          URL="https://github.com/goreleaser/nfpm/releases/download/v${V}/nfpm_${V}_Linux_x86_64.tar.gz"
+          curl -fsSL -o /tmp/nfpm.tar.gz "$URL"
+
+          # 解压前先确认拿到的是 gzip。URL 万一再变，这里能立刻说清原因，
+          # 而不是让失败出现在后面几步的打包命令里。
+          file /tmp/nfpm.tar.gz | grep -q 'gzip compressed data' || {
+            echo "::error::下载到的不是 gzip，URL 可能又变了：$URL"
+            head -c 200 /tmp/nfpm.tar.gz
+            exit 1
+          }
+
+          tar xzf /tmp/nfpm.tar.gz -C /tmp nfpm
+          chmod +x /tmp/nfpm
+          # 真跑一次：架构不对、解出来是个空壳，都在这里拦住
           /tmp/nfpm --version
+
+      # 暂存安装树。**必须在仓库根跑** —— Makefile 在这儿，
+      # 而且 nfpm.yaml 里的 src 是 ../build/pkg/...，从 packaging/ 解析
+      # 正好指到 <仓库根>/build/pkg。packaging/ 里没有 Makefile，
+      # 在那跑 make install 只会报 "No rule to make target 'install'" 然后空转。
+      - name: 暂存安装树（替换 @PREFIX@）
+        # .desktop 里有 @PREFIX@ 占位符要由 sed 替换，而 nfpm 不做替换，
+        # 所以先 make install 出一份替换好的暂存树给 nfpm 吃。
+        run: make install DESTDIR=build/pkg PREFIX=/usr
 
       - name: 构建 deb / rpm / arch
         working-directory: packaging
         run: |
           set -euo pipefail
-          mkdir -p "${{ github.workspace }}/pkgtest"
+          OUT="${{ github.workspace }}/pkgtest"
+          mkdir -p "$OUT"
 
-          # .desktop 里有 @PREFIX@ 占位符要由 sed 替换，而 nfpm 不做替换。
-          # 必须先用 make install 暂存，nfpm.yaml 的 src 指向那份产物。
-          make install DESTDIR=build/pkg PREFIX=/usr >/dev/null
-
-          # --packager 会跑 nfpm.yaml 里配置的 postinstall 之类脚本吗？
-          # 不会 —— 那些只在真正安装时执行。这里只验证「能不能打出包」。
+          # 注意工作目录是 packaging/（而不是仓库根）：nfpm.yaml 的
+          # contents.src 与 scripts.* 都是**相对当前工作目录**解析的。
+          #
+          # --packager 不会执行 nfpm.yaml 里配置的 postinstall 之类脚本 ——
+          # 那些只在真正安装时跑。这里只验证「能不能打出包」。
           # 注意 archlinux 不是 arch，写 arch 会直接报 packager 不存在。
-          /tmp/nfpm package \
-            --config nfpm.yaml \
-            --packager deb \
-            --target "${{ github.workspace }}/pkgtest"
-          /tmp/nfpm package \
-            --config nfpm.yaml \
-            --packager rpm \
-            --target "${{ github.workspace }}/pkgtest"
-          /tmp/nfpm package \
-            --config nfpm.yaml \
-            --packager archlinux \
-            --target "${{ github.workspace }}/pkgtest"
-          ls -la "${{ github.workspace }}/pkgtest"
+          for f in deb rpm archlinux; do
+            echo "── $f ──"
+            /tmp/nfpm package --config nfpm.yaml --packager "$f" --target "$OUT"
+          done
+          ls -la "$OUT"
 
       - name: 上传包（供人工检查）
         uses: actions/upload-artifact@v4

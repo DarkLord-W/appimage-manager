@@ -234,9 +234,43 @@ jobs:
 
       - name: 安装 nfpm
         run: |
-          NFPM_URL=https://nfpm.goreleaser.com/static/nfpm-2.41.0_linux_amd64.tar.gz
-          curl -fsSL "$NFPM_URL" | tar -xz -C /tmp nfpm
+          set -euo pipefail
+
+          # nfpm 只发布在 GitHub Releases 上，没有 apt 包。
+          #
+          # URL 里的大小写是有讲究的：资产名是 nfpm_<版本>_Linux_x86_64.tar.gz
+          # （大写 L、大写 X）。老工作流用的是
+          #   https://nfpm.goreleaser.com/static/nfpm-2.41.0_linux_amd64.tar.gz
+          # 那个 GoReleaser static 托管早就下线了，现在返回 404 的 HTML 页面。
+          #
+          # 所以下面第一件事是给 curl 加 -f（遇 4xx/5xx 直接失败）。
+          # 少了它，404 的 HTML 会顺着管道喂给 tar，报出来的是
+          # 「gzip: stdin: not in gzip format」——指错方向的错误信息，
+          # 真正的原因（URL 404 了）反而看不见。
+          V=2.47.0
+          URL="https://github.com/goreleaser/nfpm/releases/download/v${V}/nfpm_${V}_Linux_x86_64.tar.gz"
+          curl -fsSL -o /tmp/nfpm.tar.gz "$URL"
+
+          # 解压前先确认拿到的是 gzip。URL 万一再变，这里能立刻说清原因，
+          # 而不是让失败出现在后面几步的打包命令里。
+          file /tmp/nfpm.tar.gz | grep -q 'gzip compressed data' || {
+            echo "::error::下载到的不是 gzip，URL 可能又变了：$URL"
+            head -c 200 /tmp/nfpm.tar.gz
+            exit 1
+          }
+
+          tar xzf /tmp/nfpm.tar.gz -C /tmp nfpm
+          chmod +x /tmp/nfpm
+          # 真跑一次：架构不对、解出来是个空壳，都在这里拦住
           /tmp/nfpm --version
+
+      # 暂存安装树。**必须在仓库根跑** —— packaging/ 里没有 Makefile，
+      # 在那跑 make install 只会报 "No rule to make target 'install'" 然后空转，
+      # 后面 nfpm 会因为找不到 ../build/pkg/... 而失败。
+      - name: 暂存安装树（替换 @PREFIX@）
+        # .desktop 里有 @PREFIX@ 占位符要由 sed 替换，而 nfpm 不做替换，
+        # 所以先 make install 出一份替换好的暂存树给 nfpm 吃。
+        run: make install DESTDIR=build/pkg PREFIX=/usr
 
       - name: 打 deb / rpm / arch 包
         working-directory: packaging
@@ -244,11 +278,10 @@ jobs:
           set -euo pipefail
           V="${{ steps.ver.outputs.version }}"
           OUT="${{ github.workspace }}/dist"
+          mkdir -p "$OUT"
 
-          # .desktop 里有 @PREFIX@ 占位符要由 sed 替换，而 nfpm 不做替换。
-          # 所以必须先用 make install 把替换后的文件暂存到 build/pkg，
-          # nfpm.yaml 里那个 src 路径指的正是它。
-          make install DESTDIR=build/pkg PREFIX=/usr >/dev/null
+          # 注意工作目录是 packaging/：nfpm.yaml 的 contents.src 与
+          # scripts.* 都相对当前工作目录解析。
 
           # ── 版本号必须来自 tag ──────────────────────────────────
           #
@@ -391,7 +424,10 @@ jobs:
             echo "|---|---|"
             echo "| \`AppImage-Manager-$V-x86_64.AppImage\` | 免安装，赋可执行权限后双击即用 |"
             echo "| \`appimage-manager-$V-linux-x86_64.tar.gz\` | 想免安装又要能进应用菜单 |"
-            echo "| \`appimage-manager_$V_amd64.deb\` | Debian / Ubuntu / Kali / Mint |"
+            # deb 的文件名带 nfpm 的 release 字段（nfpm.yaml 里的 release:），
+            # 实际是 appimage-manager_1.0.0-1_amd64.deb，不是 ..._1.0.0_amd64.deb。
+            # 写成后者的话用户按说明找不到文件。
+            echo "| \`appimage-manager_$V-1_amd64.deb\` | Debian / Ubuntu / Kali / Mint |"
             echo "| \`appimage-manager-$V-1.x86_64.rpm\` | Fedora / RHEL / openSUSE |"
             echo "| \`appimage-manager-$V-1-x86_64.pkg.tar.zst\` | Arch / Manjaro |"
             echo "| \`appimage-manager-$V-src.tar.gz\` | 源码（发行版打包者用） |"
