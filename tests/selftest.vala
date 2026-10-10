@@ -1156,6 +1156,206 @@ public int main (string[] args) {
         GLib.FileUtils.remove (alive);
     }
 
+    /* ══ 20. 事务日志与备份还原 ════════════════════════════════
+     *
+     * Journal / Backup 此前几乎零覆盖（Journal 0 处引用），而它们是所有
+     * 破坏性操作的唯一撤销通道。这里把最容易悄悄坏掉的三件事钉死：
+     *   1) 序列化往返：崩溃恢复读的就是这份 JSON，字段丢了就恢复不了
+     *   2) 备份→改动→还原：还原后必须逐字节回到原样
+     *   3) 篡改检测：备份之后文件又被改过，还原时必须知道而不是盲覆盖
+     * ══════════════════════════════════════════════════════════════ */
+    stdout.printf ("\n── 20. 事务日志与备份还原 ────────────────\n");
+
+    if (sandboxed) {
+        // ── 1) 序列化往返，含需要转义的字符 ──
+        var tx20 = new Journal.Tx ();
+        tx20.txid = Journal.new_txid ();
+        tx20.operation = "repair";
+        tx20.mode = "conservative";
+        tx20.started_at = Journal.now_iso ();
+
+        var it20 = new Journal.Item ();
+        it20.orig_path = "/tmp/带 空格 和\"引号\".desktop";
+        it20.new_path = "/tmp/新名字.desktop";
+        it20.actions = { "backup", "fix", "rename" };
+        it20.rules_fired = { "版本号越界", "行尾有多余空白" };
+        it20.status = "done";
+        it20.duration_ms = 12345;
+        tx20.set_items ({ it20 });
+
+        string json20 = tx20.serialize ();
+        check (ref checks, ref failures, "事务能序列化成 JSON",
+               json20.has_prefix ("{") && json20.has_suffix ("}"), json20.substring (0, 60));
+
+        var back20 = Journal.Tx.from_json (json20);
+        check (ref checks, ref failures, "JSON 能解析回事务",
+               back20 != null, "from_json 返回 null");
+        if (back20 != null) {
+            check (ref checks, ref failures, "往返后 txid 不变",
+                   back20.txid == tx20.txid, back20.txid);
+            check (ref checks, ref failures, "往返后 operation/mode 不变",
+                   back20.operation == "repair" && back20.mode == "conservative", "");
+            check (ref checks, ref failures, "往返后含空格与引号的路径不变",
+                   back20.items.length == 1
+                   && back20.items[0].orig_path == it20.orig_path,
+                   "得到 \"" + (back20.items.length > 0 ? back20.items[0].orig_path : "") + "\"");
+            check (ref checks, ref failures, "往返后 actions 数组不变",
+                   back20.items[0].actions.length == 3
+                   && back20.items[0].actions[2] == "rename",
+                   "得到 %d 项".printf (back20.items[0].actions.length));
+            check (ref checks, ref failures, "往返后中文 rules_fired 不乱码",
+                   back20.items[0].rules_fired.length == 2
+                   && back20.items[0].rules_fired[0] == "版本号越界",
+                   "得到 \"%s\"".printf (back20.items[0].rules_fired[0] ?? ""));
+            check (ref checks, ref failures, "往返后 duration_ms 不变",
+                   back20.items[0].duration_ms == 12345,
+                   "%d".printf ((int) back20.items[0].duration_ms));
+        }
+
+        // ── 2) 未完成的事务能被 pending() 发现（崩溃恢复的入口）──
+        tx20.write_journal ();
+        bool found_pending = false;
+        foreach (var p in Journal.pending ())
+            if (p.txid == tx20.txid)
+                found_pending = true;
+        check (ref checks, ref failures, "未提交的事务能被 pending() 发现",
+               found_pending, "崩溃恢复会漏掉它");
+
+        // 提交后就不该再出现在待恢复列表里
+        tx20.commit ();
+        bool still_pending = false;
+        foreach (var p in Journal.pending ())
+            if (p.txid == tx20.txid)
+                still_pending = true;
+        check (ref checks, ref failures, "提交后不再出现在 pending() 里",
+               !still_pending, "已提交的事务仍被当成待恢复");
+
+        // ── 3) 备份 → 改动 → 还原 的完整往返 ──
+        string orig_text = "[Desktop Entry]\nType=Application\nName=原始名称\n"
+                         + "# 一条注释，验证往返不丢\n\nExec=/a/b.AppImage %U\n";
+        string victim = GLib.Path.build_filename (sandbox, "restore-me.desktop");
+        GLib.FileUtils.set_contents (victim, orig_text);
+
+        var tx21 = new Journal.Tx ();
+        tx21.txid = Journal.new_txid ();
+        tx21.operation = "repair";
+        tx21.started_at = Journal.now_iso ();
+
+        var bk = Backup.backup_file (tx21, victim);
+        check (ref checks, ref failures, "backup_file 记录了原路径",
+               bk.orig_path != "", bk.orig_path);
+        check (ref checks, ref failures, "backup_file 填了备份路径",
+               bk.backup_path != "", "backup_path 为空");
+        check (ref checks, ref failures, "backup_file 记了改动前的 sha256",
+               bk.sha256_before == Journal.sha256 (victim), "");
+
+        // backup_file 只是返回 Item，调用方必须自己注册进事务 ——
+        // 真实调用方（Repair.execute）就是这么做的
+        bk.actions = { "backup", "fix" };
+        bk.status = "done";
+        tx21.set_items ({ bk });
+
+        bool intact_ok = false;
+        bool file_matches = false;
+        intact_ok = Backup.backup_intact (tx21, bk, out file_matches);
+        check (ref checks, ref failures, "备份刚做完时校验通过",
+               intact_ok, "备份校验失败");
+
+        // 把文件改坏
+        GLib.FileUtils.set_contents (victim, "[Desktop Entry]\nType=Application\nName=被改坏了\n");
+        // 再还原
+        var rr = Backup.restore (tx21, Backup.ConflictPolicy.STASH);
+        check (ref checks, ref failures, "还原报告成功 1 个",
+               rr.restored == 1,
+               "restored=%d failed=%d msg=%s".printf (rr.restored, rr.failed,
+                                                      string.joinv ("; ", rr.messages)));
+
+        string got = "";
+        try { GLib.FileUtils.get_contents (victim, out got); } catch { got = ""; }
+        check (ref checks, ref failures, "还原后内容逐字节回到原样",
+               got == orig_text,
+               "还原后长度 %d，原长度 %d".printf (got.length, orig_text.length));
+        check (ref checks, ref failures, "还原保留了注释",
+               got.contains ("一条注释"), "");
+        check (ref checks, ref failures, "还原保留了空行",
+               got.contains ("\n\n"), "");
+
+        // ── 4) 篡改检测：备份之后文件又被改过，还原时要能发现 ──
+        string victim2 = GLib.Path.build_filename (sandbox, "restore-me2.desktop");
+        GLib.FileUtils.set_contents (victim2, "[Desktop Entry]\nName=版本二\n");
+        var tx22 = new Journal.Tx ();
+        tx22.txid = Journal.new_txid ();
+        tx22.operation = "repair";
+        tx22.started_at = Journal.now_iso ();
+        var bk2 = Backup.backup_file (tx22, victim2);
+        bk2.actions = { "backup", "fix" };
+        bk2.status = "done";
+        tx22.set_items ({ bk2 });
+
+        // 用户后来又手动改了它 —— 与备份不符
+        GLib.FileUtils.set_contents (victim2, "[Desktop Entry]\nName=用户后来改的\n");
+        bool ok2 = false; bool match2 = true;
+        ok2 = Backup.backup_intact (tx22, bk2, out match2);
+        check (ref checks, ref failures, "文件被改过之后，校验如实报告不匹配",
+               !match2, "match2=true，篡改没被发现");
+
+        // STASH 策略应另存当前内容再还原，不能把用户的后续修改直接吞掉
+        var rr2 = Backup.restore (tx22, Backup.ConflictPolicy.STASH);
+        string got2 = "";
+        try { GLib.FileUtils.get_contents (victim2, out got2); } catch { got2 = ""; }
+        check (ref checks, ref failures, "STASH 策略下内容被还原",
+               got2.contains ("版本二"), "得到 \"%s\"".printf (got2.replace ("\n", "|")));
+
+        // ── 5) 备份文件缺失时必须报错而不是静默放过 ──
+        string victim3 = GLib.Path.build_filename (sandbox, "restore-me3.desktop");
+        GLib.FileUtils.set_contents (victim3, "[Desktop Entry]\nName=版本三\n");
+        var tx23 = new Journal.Tx ();
+        tx23.txid = Journal.new_txid ();
+        tx23.operation = "repair";
+        tx23.started_at = Journal.now_iso ();
+        var bk3 = Backup.backup_file (tx23, victim3);
+        bk3.actions = { "backup", "fix" };
+        bk3.status = "done";
+        tx23.set_items ({ bk3 });
+        string bpath = Backup.backup_file_path (tx23, bk3);
+        if (bpath != "") GLib.FileUtils.remove (bpath);
+
+        var rr3 = Backup.restore (tx23, Backup.ConflictPolicy.STASH);
+        check (ref checks, ref failures, "备份缺失时还原要计为失败而不是成功",
+               rr3.failed >= 1,
+               "restored=%d failed=%d".printf (rr3.restored, rr3.failed));
+
+        // ── 5b) 空事务不能静默「成功」 ──
+        var empty_tx = new Journal.Tx ();
+        empty_tx.txid = Journal.new_txid ();
+        empty_tx.operation = "create";
+        empty_tx.started_at = Journal.now_iso ();
+        empty_tx.set_items ({});
+        var rre = Backup.restore (empty_tx, Backup.ConflictPolicy.STASH);
+        check (ref checks, ref failures, "空事务还原要明确报错而不是静默成功",
+               rre.failed >= 1 && rre.messages.length >= 1,
+               "restored=%d failed=%d messages=%d".printf (rre.restored, rre.failed,
+                                                           rre.messages.length));
+
+        // ── 6) sha256 会随内容变化 ──
+        string f6 = GLib.Path.build_filename (sandbox, "sha-probe.txt");
+        GLib.FileUtils.set_contents (f6, "one");
+        string h1 = Journal.sha256 (f6);
+        GLib.FileUtils.set_contents (f6, "two");
+        string h2 = Journal.sha256 (f6);
+        check (ref checks, ref failures, "内容变化时 sha256 随之变化",
+               h1 != h2, "两者相同");
+        GLib.FileUtils.set_contents (f6, "one");
+        check (ref checks, ref failures, "内容变回时 sha256 也变回（稳定不漂移）",
+               Journal.sha256 (f6) == h1, "");
+
+        // 收尾
+        GLib.FileUtils.remove (victim);
+        GLib.FileUtils.remove (victim2);
+        GLib.FileUtils.remove (victim3);
+        GLib.FileUtils.remove (f6);
+    }
+
     /* ══ 汇总 ════════════════════════════════════════════════════ */
     stdout.printf ("\n═══════════════════════════════════════════\n");
     if (failures == 0) {

@@ -110,6 +110,16 @@ namespace Backup {
     public static RestoreResult restore (Journal.Tx tx, ConflictPolicy policy) {
         var res = new RestoreResult ();
 
+        // 空事务要明确说出来。Backup.backup_file() 只是返回一个 Item，
+        // 还得调用方自己 set_items() 塞回去 —— 调用方一漏，这里原本
+        // 会什么都不做然后报「成功」，用户以为还原了其实文件没动过。
+        if (tx == null || tx.items.length == 0) {
+            res.failed++;
+            res.log ("这个事务没有可还原的条目"
+                     + "（创建类的操作只记录了「新建了什么」，没有旧内容可还原）。");
+            return res;
+        }
+
         foreach (var it in tx.items) {
             bool file_matches;
             if (!backup_intact (tx, it, out file_matches)) {

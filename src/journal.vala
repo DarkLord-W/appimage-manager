@@ -48,25 +48,41 @@ namespace Journal {
 
     /* ── JSON 辅助 ───────────────────────────────────────────────── */
 
-    /** 最小化的 JSON 字符串转义：反斜杠、引号与控制字符 */
+    /**
+     * 最小化的 JSON 字符串转义：反斜杠、引号与控制字符。
+     *
+     * 必须按**字节**遍历，不能用 s[i]。
+     *
+     * s[i] 取到的值在赋给 char 后是有符号的，而 char 是有符号 8 位 ——
+     * UTF-8 里所有 >= 0x80 的字节（中文、日文、emoji 全都是）都成了负数，
+     * 于是 (int) c < 0x20 判定成立，被当成控制字符转义成 \uffffffe5 这种
+     * 非法序列。解析回来就是一堆替换字符。
+     *
+     * 这不是显示问题：崩溃恢复读的正是这份 JSON，路径一旦被破坏，
+     * 还原就会找不到文件 —— 而事务日志恰恰是数据安全的最后一道防线。
+     */
     private static string esc (string s) {
         if (s == null)
             return "";
         var sb = new GLib.StringBuilder ();
         for (int i = 0; i < s.length; i++) {
-            char c = s[i];
-            switch (c) {
-                case '\\': sb.append ("\\\\"); break;
-                case '"':  sb.append ("\\\""); break;
-                case '\n': sb.append ("\\n");  break;
-                case '\r': sb.append ("\\r");  break;
-                case '\t': sb.append ("\\t");  break;
-                default:
-                    if ((int) c < 0x20)
-                        sb.append ("\\u%04x".printf ((int) c));
-                    else
-                        sb.append_c (c);
-                    break;
+            // 关键：用 unichar（无符号）而不是 char（有符号）
+            unichar c = s[i];
+            if (c == '\\') {
+                sb.append ("\\\\");
+            } else if (c == '"') {
+                sb.append ("\\\"");
+            } else if (c == '\n') {
+                sb.append ("\\n");
+            } else if (c == '\r') {
+                sb.append ("\\r");
+            } else if (c == '\t') {
+                sb.append ("\\t");
+            } else if (c < 0x20) {
+                sb.append ("\\u%04x".printf ((int) c));
+            } else {
+                // 非 ASCII 按原字节透传，UTF-8 序列原样保留
+                sb.append_c ((char) c);
             }
         }
         return sb.str;
