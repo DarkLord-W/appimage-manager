@@ -118,20 +118,26 @@ section: utils
 # extra 只留给非 free/extra 仓库。
 priority: optional
 
-maintainer: darklord-w <darklord-w@users.noreply.github.com>
+maintainer: DarkLord-W <42199147+DarkLord-W@users.noreply.github.com>
 
 # 只有 rpm 会用上（写进 Vendor 字段），写上方便 rpm -qi 溯源。
-vendor: darklord-w
+vendor: DarkLord-W
 
-homepage: https://github.com/darklord-w/appimage-manager
+homepage: https://github.com/DarkLord-W/appimage-manager
 
-license: MIT
+license: GPL-3.0
 
 # 第一行是单行摘要：rpm 拿它当 Summary，deb 拿它当 synopsis。
 description: |
-  AppImage Manager — 扫描 AppImage 并维护规范的 .desktop 启动器
-  Scan AppImage files, then create, repair and health-check their .desktop
-  launchers so the desktop menu entries stay valid and consistent.
+  AppImage 桌面集成管理器：扫描指定目录，把 AppImage 变成规范的 .desktop
+  启动器，并通过 28 条健康检查规则持续维护它们 —— 修复字段错误、检测 AppImage
+  丢失、回收孤儿文件。每次改动都先备份并记入事务，随时可一键还原。
+
+  AppImage desktop integration manager. Scans directories you choose, turns
+  AppImages into well-formed .desktop launchers, and keeps them healthy with
+  28 rules: fixes malformed fields, detects missing AppImages, reclaims
+  orphans. Every change is backed up and journalled, so it can always be
+  undone.
 
 # 路径里没有通配符，关掉 globbing 可以保证将来有人把路径改成含
 # [ ] ? * 的名字时，不会被静默展开成另一个文件（或者悄悄一个都没匹配上）。
@@ -224,7 +230,7 @@ scripts:
 rpm:
   # Packager 本来就会 fallback 到 maintainer（rpm.go 里是
   # defaultTo(info.RPM.Packager, info.Maintainer)），写出来只是为了明确。
-  packager: darklord-w
+  packager: DarkLord-W
   # 多数现代发行版已经不看 Group 了（rpm -qip 会显示 Group: (none)，
   # 也没人会去读），但 EL5 一代的工具链和部分企业仓库的元数据校验
   # 还要求这个字段存在。填 Unspecified 是 rpm 世界的惯例占位值。
@@ -241,7 +247,7 @@ rpm:
 archlinux:
   # 不写会被填成 "Unknown Packager"（arch.go createPkginfo 里的
   # defaultStr(..., "Unknown Packager")），在 .PKGINFO 里很难看。
-  packager: darklord-w
+  packager: DarkLord-W
   scripts:
     postupgrade: ./maintainer-scripts.sh
 

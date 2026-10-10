@@ -369,4 +369,8 @@ tests/
 
 ## 许可证
 
-MIT
+GPL-3.0，见 [LICENSE](LICENSE)。
+
+本仓库的源码即为完整源码。分发二进制（deb / rpm / arch 包、AppImage、
+tar.gz）时必须同时提供对应版本的完整源码 —— GitHub 上打 tag 的每个
+Release 都能还原出该版本的全部源码，clone 后 `git checkout <sha>` 即可。

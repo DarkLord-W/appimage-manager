@@ -12,7 +12,7 @@ public class AppMgr : Gtk.Application {
 
     public AppMgr () {
         /* 注意：本机 gio-2.0.vapi 把 Gio 的类型全部并入 GLib 命名空间 */
-        Object (application_id: "io.github.kali.AppImageManager",
+        Object (application_id: "io.github.darklord-w.AppImageManager",
                 flags: GLib.ApplicationFlags.HANDLES_OPEN);
     }
 
