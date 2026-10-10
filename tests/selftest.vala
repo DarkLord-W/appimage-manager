@@ -1507,6 +1507,233 @@ public int main (string[] args) {
         }
     }
 
+    /* ══ 22. 逐条钉住健康检查规则 ══════════════════════════════
+     *
+     * 规则集有 28 条。此前只有间接覆盖（跑一次 check 看总数），
+     * 没有任何一条断言「某个具体的坏法必须命中某条具体的规则」——
+     * 于是规则被误删、误改、或判定条件写错，都不会有人发现。
+     *
+     * 这里做成表驱动：每种坏法 → 期望命中的规则 id。
+     * 同时钉住反向：完美样本必须零问题，缺某个键才报对应规则。
+     * ══════════════════════════════════════════════════════════════ */
+    stdout.printf ("\n── 22. 逐条钉住健康检查规则 ────────────────\n");
+
+    if (sandboxed) {
+        int rule_seq = 0;
+        var created_rules = new GenericArray<string> ();
+
+        // 在逗号分隔的规则 id 串里找某个 id（避免用 string.contains 这类
+        // 会误配的写法：找 "E001" 时不能被 "E0011" 之类的命中）
+        bool has_str22 (string ids, string want) {
+            foreach (string part in ids.split (","))
+                if (part.strip () == want)
+                    return true;
+            return false;
+        }
+
+        string ai22 = GLib.Path.build_filename (apps_dir, "Obsidian-1.5.3-x86_64.AppImage");
+        var app22 = new AppEntry (ai22);
+        app22.meta_name = "Perfect Entry";
+        app22.categories = "Office;Utility;";
+
+        // 写一个 .desktop，返回解析结果
+        DesktopFiles.Entry? mk22 (string body) {
+            string p = GLib.Path.build_filename (sandbox, "rule-%d.desktop".printf (rule_seq++));
+            GLib.FileUtils.set_contents (p, body);
+            var d = DesktopFiles.parse (p);
+            if (d != null)
+                created_rules.add (p);
+            return d;
+        }
+
+        // 完美样本的各个片段，改哪一块就能单独触发一条规则
+
+        /** 跑一次 check，返回命中的规则 id 串，便于精确断言 */
+        string ids22 (string body) {
+            var d = mk22 (body);
+            if (d == null)
+                return "<解析失败>";
+            var r = RuleSet.check (d, app22);
+            var l = new GenericArray<string> ();
+            foreach (var pr in r.problems)
+                l.add (pr.id);
+            return string.joinv (",", l.steal ());
+        }
+
+        // 反向基准：完整样本必须零问题。有问题就说明规则误伤了正确写法。
+        string icon22 = GLib.Path.build_filename (sandbox, "rule-icon.png");
+        GLib.FileUtils.set_contents (icon22, "x");
+
+        string base22 =
+            "[Desktop Entry]\n"
+            + "Type=Application\n"
+            + "Version=1.5\n"
+            + "Name=Perfect Entry\n"
+            + "GenericName=Perfect\n"
+            + "Comment=A perfectly well-formed desktop entry\n"
+            + "Exec=\"" + ai22 + "\" %U\n"
+            + "TryExec=" + ai22 + "\n"
+            + "Icon=" + icon22 + "\n"
+            + "Terminal=false\n"
+            + "StartupNotify=true\n"
+            + "StartupWMClass=Perfect Entry\n"
+            + "Categories=Office;Utility;\n"
+            + "X-AppImage-Manager=true\n"
+            + "X-AppImage-Manager-Path=" + ai22 + "\n";
+
+        string perfect_ids = ids22 (base22);
+        check (ref checks, ref failures, "完美样本零问题（规则不能误伤正确写法）",
+               perfect_ids == "", "误报了: " + perfect_ids);
+
+        // 表驱动：坏法 → 必须命中的规则
+        // （只断言「命中了」，不断言「只命中这一条」——规则之间有叠加关系）
+        // 表驱动：坏法 → 必须命中的规则 id
+        // 规则 id 的真实含义（逐条核对 rules.vala，别照字面猜）：
+        //   D005=Type 缺失/错  E001=Version 越界  E002=Exec 缺失
+        //   E005=Exec 里 % 未转义  E007=Name 缺失  E008=重复键
+        //   I002=Categories  I003=StartupWMClass  I004=Comment
+        //   I005=Terminal=true 但像 GUI  I007=NoDisplay  I010=TryExec
+        //   C001=GenericName
+        // 注意 Icon 必须指向真实存在的文件，否则会命中 I001「Icon 指向的
+        // 文件不存在」—— 这条规则是对的，测试样本该满足它而不是绕开它。
+        string[] case_bodies = {
+            base22.replace ("Type=Application\n", "Type=Link\n"),
+            base22.replace ("Version=1.5\n", "Version=2.0\n"),
+            base22.replace ("Exec=\"" + ai22 + "\" %U\n", ""),
+            base22.replace ("Exec=\"" + ai22 + "\" %U", "Exec=\"" + ai22 + " 100%\" %U"),
+            base22.replace ("Name=Perfect Entry\n", ""),
+            base22 + "Name=重复的名字\n",
+            base22.replace ("Categories=Office;Utility;\n", ""),
+            base22.replace ("StartupWMClass=Perfect Entry\n", ""),
+            base22.replace ("Comment=A perfectly well-formed desktop entry\n", ""),
+            base22.replace ("Terminal=false\n", "Terminal=true\n"),
+            base22 + "NoDisplay=true\n",
+            base22.replace ("TryExec=" + ai22 + "\n", ""),
+            base22.replace ("GenericName=Perfect\n", ""),
+        };
+        string[] case_want = {
+            "D005", "E001", "E002", "E005", "E007", "E008",
+            "I002", "I003", "I004", "I005", "I007", "I010", "C001"
+        };
+        string[] case_what = {
+            "Type 不是 Application → D005",
+            "Version 越界 → E001",
+            "Exec 缺失 → E002",
+            "Exec 里 % 未转义 → E005",
+            "Name 缺失 → E007",
+            "重复键 → E008",
+            "缺 Categories → I002",
+            "缺 StartupWMClass → I003",
+            "缺 Comment → I004",
+            "Terminal=true 但像 GUI 应用 → I005",
+            "NoDisplay=true → I007",
+            "缺 TryExec → I010",
+            "缺 GenericName → C001",
+        };
+
+        for (int i = 0; i < case_bodies.length; i++) {
+            string body = case_bodies[i];
+            string want = case_want[i];
+            string what = case_what[i];
+            string got = ids22 (body);
+
+            if (want == "E00") {
+                // Exec 缺失对应两条规则，只断言确实报出了 Exec 类问题
+                bool hit = got.contains ("E003") || got.contains ("E004")
+                        || got.contains ("E005") || got.contains ("E006");
+                check (ref checks, ref failures, "规则命中：" + what, hit,
+                       "命中的规则: " + (got == "" ? "（无）" : got));
+            } else {
+                check (ref checks, ref failures, "规则命中：" + what,
+                       has_str22 (got, want),
+                       "命中 %s，期望含 %s".printf (
+                           got == "" ? "（无）" : got, want));
+            }
+        }
+
+        // 终止规则：NoDisplay / Hidden 的那条必须要求确认，不能被自动应用
+        var d22 = mk22 (base22 + "NoDisplay=true\n");
+        if (d22 != null) {
+            var r22 = RuleSet.check (d22, app22);
+            bool found_nd = false;
+            bool nd_confirm = false;
+            foreach (var pr in r22.problems)
+                if (pr.id == "I007") {
+                    found_nd = true;
+                    nd_confirm = pr.needs_confirm;
+                }
+            check (ref checks, ref failures, "NoDisplay 问题必须要求用户确认",
+                   found_nd && nd_confirm,
+                   "found=%s needs_confirm=%s".printf ((found_nd ? "yes" : "no"), (nd_confirm ? "yes" : "no")));
+        }
+
+        // 恢复类规则必须标记为可自动修，纯提示类必须不可自动修
+        var d22b = mk22 (base22.replace ("Version=1.5\n", "Version=2.0\n"));
+        if (d22b != null) {
+            var r22b = RuleSet.check (d22b, app22);
+            // 版本越界的规则 id 是 E001（E 系列才是 Exec/版本这类问题；
+            // D 系列是文件级缺陷如 BOM、CRLF、组头缺失）。先前这里写成
+            // D001 —— D001 根本没被命中，于是 ver_applyable 停在初值
+            // false，看起来像「规则说不可自动修」，其实是找错了规则。
+            bool ver_applyable = false;
+            bool ver_found = false;
+            foreach (var pr in r22b.problems)
+                if (pr.id == "E001") {
+                    ver_found = true;
+                    ver_applyable = pr.applyable;
+                }
+            check (ref checks, ref failures, "Version 越界可自动修（钳回 1.5）",
+                   ver_found && ver_applyable,
+                   "found=%s applyable=%s".printf (ver_found ? "yes" : "no",
+                                                   ver_applyable ? "yes" : "no"));
+        }
+        // GenericName 缺失属提示级（NOTICE）。查过 rules.vala：C001 没有把
+        // applyable 置 false，也就是允许自动修 —— 补出来的值就是应用名。
+        //
+        // 值得留意：这是唯一一条「靠猜」却允许自动写盘的规则。用户没写
+        // GenericName 通常是有意为之，自动补上等于替他做了决定。
+        // 把「可自动修」这个现状显式钉住 —— 将来若有人改成需要确认，
+        // 这条会失败并提醒同步更新文案，而不是让行为悄悄变化。
+        var d22c = mk22 (base22.replace ("GenericName=Perfect\n", ""));
+        if (d22c != null) {
+            var r22c = RuleSet.check (d22c, app22);
+            bool gen_found = false;
+            bool gen_applyable = false;
+            string gen_fixed = "";
+            foreach (var pr in r22c.problems)
+                if (pr.id == "C001") {
+                    gen_found = true;
+                    gen_applyable = pr.applyable;
+                    gen_fixed = pr.fixed;
+                }
+            check (ref checks, ref failures, "缺 GenericName 会报出 C001",
+                   gen_found, "C001 没被触发，规则本身可能有问题");
+            check (ref checks, ref failures, "C001 当前允许自动修（钉住现状）",
+                   !gen_found || gen_applyable,
+                   "applyable 从 true 变成 false 了 —— 行为已变，同步更新断言与文案");
+            check (ref checks, ref failures, "C001 给出的修法就是应用名",
+                   !gen_found || gen_fixed.contains (app22.get_best_name ()),
+                   "fixed=\"" + gen_fixed + "\"");
+        }
+
+        // 每个问题都要有可读的标题，否则界面会显示空白
+        bool all_titled = true;
+        // 必须先把结果存进本地变量再遍历。
+        // 直接写 foreach (var pr in RuleSet.check(...).problems) 时，
+        // 那个临时 Result 在 .problems 被取出后、循环体开始前就可能被释放，
+        // 循环变量 pr 指向已释放内存，读 .id/.title 就段错误。
+        // 与本项目踩过的「闭包捕获变量悬空」是同一类错误。
+        var r_titles = RuleSet.check (d22b, app22);
+        foreach (var pr in r_titles.problems)
+            if (pr.title.strip () == "")
+                all_titled = false;
+        check (ref checks, ref failures, "每条问题都有可读标题",
+               all_titled, "有空标题的问题");
+
+        foreach (string p in created_rules)
+            GLib.FileUtils.remove (p);
+    }
+
     /* ══ 汇总 ════════════════════════════════════════════════════ */
     stdout.printf ("\n═══════════════════════════════════════════\n");
     if (failures == 0) {
