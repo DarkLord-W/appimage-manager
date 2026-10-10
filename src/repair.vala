@@ -763,7 +763,7 @@ namespace Repair {
             sb.append ("+ %s\n".printf (b[i]));
 
         if (suf > 0) {
-            sb.append ("  …（%d 行未变）\n".printf (suf));
+            sb.append (I18n.s ("  …（%d 行未变）\n").printf (suf));
         }
 
         return sb.str;
@@ -852,7 +852,7 @@ namespace Repair {
             string verr = DesktopFiles.validate_content (p.proposed_content);
             if (verr != "") {
                 it.status = "failed";
-                it.error = "校验未通过: " + verr;
+                it.error = I18n.s ("校验未通过: ") + verr;
                 msgs.add ("%s —— %s".printf (GLib.Path.get_basename (p.entry.file_path), it.error));
                 it.duration_ms = (GLib.get_monotonic_time () - t0) / 1000;
                 tx.write_journal ();
@@ -866,7 +866,7 @@ namespace Repair {
             DesktopFiles.write_atomic (target, p.proposed_content, out werr);
             if (werr != null) {
                 it.status = "failed";
-                it.error = werr ?? "写入失败";
+                it.error = werr ?? I18n.s ("写入失败");
                 msgs.add ("%s —— %s".printf (GLib.Path.get_basename (p.entry.file_path), it.error));
                 it.duration_ms = (GLib.get_monotonic_time () - t0) / 1000;
                 tx.write_journal ();
@@ -894,7 +894,7 @@ namespace Repair {
 
         // ── 回滚 ─────────────────────────────────────────────
         if (rollback && res.done > 0) {
-            msgs.add ("发生失败，正在回滚 %d 项…".printf (res.done));
+            msgs.add (I18n.s ("发生失败，正在回滚 %d 项…").printf (res.done));
             var rr = Backup.restore (tx, Backup.ConflictPolicy.OVERWRITE);
             foreach (string m in rr.messages)
                 msgs.add ("  " + m);
@@ -987,7 +987,7 @@ namespace Repair {
             if (app.entry != null || existing.contains (app.path)) {
                 res.skipped++;
                 string nm = app.basename;
-                msgs.add ("%s —— 已存在启动器，跳过".printf (nm));
+                msgs.add (I18n.s ("%s —— 已存在启动器，跳过").printf (nm));
                 continue;
             }
 
@@ -1013,7 +1013,7 @@ namespace Repair {
             string verr = DesktopFiles.validate_content (content);
             if (verr != "") {
                 res.failed++;
-                msgs.add ("%s —— 校验未通过: %s".printf (app.basename, verr));
+                msgs.add (I18n.s ("%s —— 校验未通过: %s").printf (app.basename, verr));
                 continue;
             }
 
@@ -1027,7 +1027,7 @@ namespace Repair {
             DesktopFiles.write_atomic (target, content, out werr);
             if (werr != null) {
                 res.failed++;
-                msgs.add ("%s —— %s".printf (app.basename, werr ?? "写入失败"));
+                msgs.add ("%s —— %s".printf (app.basename, werr ?? I18n.s ("写入失败")));
                 continue;
             }
 
@@ -1097,7 +1097,7 @@ namespace Repair {
                 string? derr;
                 if (!DesktopFiles.delete (path, out derr)) {
                     it.status = "failed";
-                    it.error = derr ?? "删除失败";
+                    it.error = derr ?? I18n.s ("删除失败");
                     res.failed++;
                     msgs.add ("%s —— %s".printf (app.basename, derr ?? ""));
                     continue;

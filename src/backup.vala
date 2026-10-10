@@ -27,7 +27,7 @@ namespace Backup {
             Journal.history_tx_dir (tx.txid), "file");
         if (!AppPath.ensure_dir (backup_dir)) {
             it.status = "failed";
-            it.error = "无法创建备份目录";
+            it.error = I18n.s ("无法创建备份目录");
             return it;
         }
 
@@ -40,7 +40,7 @@ namespace Backup {
             it.status = "pending";
         } catch (GLib.Error e) {
             it.status = "failed";
-            it.error = "备份失败: %s".printf (e.message);
+            it.error = I18n.s ("备份失败: %s").printf (e.message);
         }
         return it;
     }
@@ -115,8 +115,8 @@ namespace Backup {
         // 会什么都不做然后报「成功」，用户以为还原了其实文件没动过。
         if (tx == null || tx.items.length == 0) {
             res.failed++;
-            res.log ("这个事务没有可还原的条目"
-                     + "（创建类的操作只记录了「新建了什么」，没有旧内容可还原）。");
+            res.log (I18n.s ("这个事务没有可还原的条目")
+                     + I18n.s ("（创建类的操作只记录了「新建了什么」，没有旧内容可还原）。"));
             return res;
         }
 
@@ -124,7 +124,7 @@ namespace Backup {
             bool file_matches;
             if (!backup_intact (tx, it, out file_matches)) {
                 res.failed++;
-                res.log ("%s —— 备份缺失或校验不通过".printf (GLib.Path.get_basename (it.orig_path)));
+                res.log (I18n.s ("%s —— 备份缺失或校验不通过").printf (GLib.Path.get_basename (it.orig_path)));
                 continue;
             }
 
@@ -133,17 +133,17 @@ namespace Backup {
                 switch (policy) {
                     case ConflictPolicy.SKIP:
                         res.skipped++;
-                        res.log ("%s —— 修复后被修改过，按设置跳过".printf (GLib.Path.get_basename (it.new_path)));
+                        res.log (I18n.s ("%s —— 修复后被修改过，按设置跳过").printf (GLib.Path.get_basename (it.new_path)));
                         continue;
                     case ConflictPolicy.STASH: {
                         string stash = "%s.modified-%s".printf (
                             it.new_path, stamp_now ());
                         if (GLib.FileUtils.rename (it.new_path, stash) != 0) {
                             res.failed++;
-                            res.log ("%s —— 无法另存当前内容".printf (GLib.Path.get_basename (it.new_path)));
+                            res.log (I18n.s ("%s —— 无法另存当前内容").printf (GLib.Path.get_basename (it.new_path)));
                             continue;
                         }
-                        res.log ("%s —— 当前内容已另存为 %s"
+                        res.log (I18n.s ("%s —— 当前内容已另存为 %s")
                             .printf (GLib.Path.get_basename (it.new_path),
                                      GLib.Path.get_basename (stash)));
                         break;
@@ -175,7 +175,7 @@ namespace Backup {
                 // 先把新路径挪走，再把备份写回原路径
                 if (GLib.FileUtils.rename (it.new_path, it.new_path + ".pre-restore") != 0) {
                     res.failed++;
-                    res.log ("%s —— 无法清理重命名后的文件".printf (GLib.Path.get_basename (it.new_path)));
+                    res.log (I18n.s ("%s —— 无法清理重命名后的文件").printf (GLib.Path.get_basename (it.new_path)));
                     continue;
                 }
             }
@@ -183,7 +183,7 @@ namespace Backup {
             DesktopFiles.write_atomic (it.orig_path, content, out err);
             if (err != null) {
                 res.failed++;
-                res.log ("%s —— 还原写入失败: %s".printf (
+                res.log (I18n.s ("%s —— 还原写入失败: %s").printf (
                     GLib.Path.get_basename (it.orig_path), err));
                 continue;
             }
@@ -223,7 +223,7 @@ namespace Backup {
             string? n;
             while ((n = de.read_name ()) != null) {
                 // 目标：hicolor 下的原图标目录（从 desktop 的 Icon 键判断）
-                res.log ("%s —— 图标快照已保留在 %s".printf (
+                res.log (I18n.s ("%s —— 图标快照已保留在 %s").printf (
                     n, AppPath.shorten (icon_dir)));
             }
         } catch {}
@@ -279,12 +279,12 @@ namespace Backup {
 
         public string display_op () {
             switch (operation) {
-                case "repair":   return "批量修复";
-                case "create":   return "创建";
-                case "delete":   return "删除";
-                case "claim":    return "认领";
-                case "unclaim":  return "取消认领";
-                case "rollback": return "已还原";
+                case "repair":   return I18n.s ("批量修复");
+                case "create":   return I18n.s ("创建");
+                case "delete":   return I18n.s ("删除");
+                case "claim":    return I18n.s ("认领");
+                case "unclaim":  return I18n.s ("取消认领");
+                case "rollback": return I18n.s ("已还原");
                 default:         return operation;
             }
         }

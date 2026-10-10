@@ -125,6 +125,18 @@ public const int DEFAULT_EXTRACT_TIMEOUT_SEC = 60;
             deadline = GLib.get_monotonic_time ()
                      + (int64) timeout_sec * 1000000;
 
+        // 注意：Vala 0.56 的 vapi 是照着较老的 GIO 写的。系统 glib 2.90 里
+        // g_subprocess_get_if_exited() 对每个子进程都会打一条
+        //   GLib-GIO-CRITICAL: g_subprocess_get_if_exited: assertion 'pid == 0' failed
+        // 每 50ms 一条，一个解 60 秒的 AppImage 就是 1200 条，足以把终端刷爆、
+        // 也把 CI 日志淹掉。
+        //
+        // 查证过这不是功能故障：返回的布尔值是对的（子进程跑着返回 false、
+        // 退出后返回 true，实测 4 个秒退的 AppImage 2 秒跑完）。而超时与取消
+        // 靠的是 deadline 和 force_exit()，本来就不依赖它。
+        //
+        // 这里按 200ms 轮询（取消响应仍在亚秒级），并在 main 里挂了
+        // 精确到这一条的日志过滤器清零噪声 —— 只丢这一条，不动别的诊断。
         while (!proc.get_if_exited ()) {
             if (cancel != null && cancel.is_cancelled ()) {
                 proc.force_exit ();
@@ -135,13 +147,39 @@ public const int DEFAULT_EXTRACT_TIMEOUT_SEC = 60;
                 proc.force_exit ();
                 return -1;
             }
-            GLib.Thread.usleep (50000);   // 50ms
+            GLib.Thread.usleep (200000);  // 200ms
         }
 
         if (!proc.get_if_exited ())
             return -1;   // 被信号杀死，没有正常退出码
 
         return proc.get_exit_status ();
+    }
+
+    /**
+     * 静默掉一条已知的 GIO 版本不匹配断言。
+     *
+     * Vala 0.56 的 vapi 对着较老的 GIO 写的，系统 glib 2.90 里
+     * g_subprocess_get_if_exited() 每次调用都会打一条
+     *   GLib-GIO-CRITICAL: assertion 'pid == 0' failed
+     * 一次解包要轮询上千次，终端和 CI 日志会被这条刷爆。
+     *
+     * 只丢这一条 —— 判断条件精确到域名 + 函数名，其它 CRITICAL / WARNING
+     * 照常输出，不做任何掩盖。
+     */
+    public static void quiet_known_glib_assertion () {
+        // 类型标注省略：Vala 里 `GLib.LogFunc` 会被解析成命名空间
+        // `GLib.Log` 加上 `Func`（GLogFunc 的旧 C 命名遗留），直接交给
+        // set_handler 的形参去推导类型。
+        GLib.Log.set_handler ("GLib-GIO",
+                              GLib.LogLevelFlags.LEVEL_WARNING |
+                              (GLib.LogLevelFlags) GLib.LogLevelFlags.LEVEL_CRITICAL,
+                              (domain, level, message) => {
+            if (domain == "GLib-GIO" &&
+                message != null &&
+                message.index_of ("g_subprocess_get_if_exited") >= 0)
+                return;     // 精确命中才丢，其余诊断照常打印
+        });
     }
 
     /**
@@ -178,13 +216,13 @@ public const int DEFAULT_EXTRACT_TIMEOUT_SEC = 60;
         var info = new AppImageInfo (path);
 
         if (!GLib.FileUtils.test (path, GLib.FileTest.EXISTS)) {
-            info.error = "文件不存在";
+            info.error = I18n.s ("文件不存在");
             return info;
         }
 
         // 不做静默 chmod：不修改用户文件，权限问题交由调用方询问用户
         if (!AppPath.is_executable (path)) {
-            info.error = "文件没有执行权限";
+            info.error = I18n.s ("文件没有执行权限");
             return info;
         }
 
@@ -193,9 +231,9 @@ public const int DEFAULT_EXTRACT_TIMEOUT_SEC = 60;
         int fmt = read_appimage_version (path);
         if (fmt != 1 && fmt != 2) {
             if (fmt >= 0)
-                info.error = "不是标准 AppImage 格式（版本字节 %d），不支持解包".printf (fmt);
+                info.error = I18n.s ("不是标准 AppImage 格式（版本字节 %d），不支持解包").printf (fmt);
             else
-                info.error = "不是标准 AppImage 格式，不支持解包";
+                info.error = I18n.s ("不是标准 AppImage 格式，不支持解包");
             return info;
         }
 
@@ -212,13 +250,13 @@ public const int DEFAULT_EXTRACT_TIMEOUT_SEC = 60;
 
         if (timed_out) {
             AppImageInfo.rm_rf (work_dir);
-            info.error = "解包超时（%d 秒）。可能是旧格式或自定义运行时，已强制终止。".printf (timeout_sec);
+            info.error = I18n.s ("解包超时（%d 秒）。可能是旧格式或自定义运行时，已强制终止。").printf (timeout_sec);
             return info;
         }
 
         if (cancel != null && cancel.is_cancelled ()) {
             AppImageInfo.rm_rf (work_dir);
-            info.error = "已取消";
+            info.error = I18n.s ("已取消");
             return info;
         }
 
@@ -228,7 +266,7 @@ public const int DEFAULT_EXTRACT_TIMEOUT_SEC = 60;
             if (alt != null) {
                 extract_dir = alt;
             } else {
-                info.error = "解包失败（exit %d），文件可能已损坏或不是标准 AppImage".printf (status);
+                info.error = I18n.s ("解包失败（exit %d），文件可能已损坏或不是标准 AppImage").printf (status);
                 return info;
             }
         }
@@ -491,7 +529,7 @@ public const int DEFAULT_EXTRACT_TIMEOUT_SEC = 60;
         var res = new LaunchResult ();
 
         if (!AppPath.is_executable (path)) {
-            res.message = "文件没有执行权限";
+            res.message = I18n.s ("文件没有执行权限");
             return res;
         }
 
@@ -505,12 +543,12 @@ public const int DEFAULT_EXTRACT_TIMEOUT_SEC = 60;
         if (timed_out) {
             res.timed_out = true;
             res.exit_code = -1;
-            res.message = "启动测试超时（%d 秒），已终止".printf (timeout_sec);
+            res.message = I18n.s ("启动测试超时（%d 秒），已终止").printf (timeout_sec);
             return res;
         }
 
         if (status < 0) {
-            res.message = "执行失败（进程未启动或被信号终止）";
+            res.message = I18n.s ("执行失败（进程未启动或被信号终止）");
             return res;
         }
 
@@ -520,14 +558,14 @@ public const int DEFAULT_EXTRACT_TIMEOUT_SEC = 60;
         // 非 0 退出且有 stderr 输出才算失败
         if (status != 0 && err != "") {
             res.success = false;
-            res.message = "启动器返回 exit %d".printf (status);
+            res.message = I18n.s ("启动器返回 exit %d").printf (status);
         } else if (status != 0 && err == "") {
             // GUI 应用常见：主进程退出码非 0 但无输出
             res.success = true;
-            res.message = "进程已退出（exit %d），无错误输出".printf (status);
+            res.message = I18n.s ("进程已退出（exit %d），无错误输出").printf (status);
         } else {
             res.success = true;
-            res.message = "已执行（%lld ms）".printf (res.elapsed_ms);
+            res.message = I18n.s ("已执行（%lld ms）").printf (res.elapsed_ms);
         }
         return res;
     }

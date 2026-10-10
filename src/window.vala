@@ -60,7 +60,21 @@ public class MainWindow : Gtk.ApplicationWindow {
     private Gtk.Button infobar_action;
     // 只有「失效/孤儿清理」类消息才把「查看并清理」按钮露出来；
     // 「✓ 路径已复制」这类成功提示不能挂着一个破坏性操作入口。
-    private bool infobar_action_is_cleanup = false;
+    /** 提示条上那个按钮此刻是什么，响应处理要靠它区分（之前是个 bool，
+     *  只能表达I18n.s ("有/没有")，加不进第三种用途） */
+    private enum InfobarAction {
+        NONE,      ///< 藏起来
+        CLEANUP,   ///< 「查看并清理」
+        RESTART    ///< 「立即重启」
+    }
+
+    /** 低于这个宽度就不显示浮层操作条（它会盖住太多列表内容） */
+    private const int MIN_OVERLAY_WIDTH = 880;
+
+    private InfobarAction infobar_action_mode = InfobarAction.NONE;
+
+    /** 语言菜单被用户打开过之后才置 true —— 见 AppMenuBar.build_language_menu */
+    public bool language_menu_armed = false;
 
     // ── 状态 ──────────────────────────────────────────────────────
     private int filter_mode = 0;      // 0=全部 1=新发现 2=已创建 3=外部 4=失效 5=可优化
@@ -116,7 +130,10 @@ public class MainWindow : Gtk.ApplicationWindow {
 
         // 最小尺寸：能缩到和别的窗口并排。过滤+操作条那一行套了横向
         // 滚动，所以窄窗口下不会破版。
-        set_size_request (620, 400);
+        // 最小高度 560 而不是 400：实测在 620x430 时，浮层操作条会盖住
+        // 列表最后两行并挡住它们的点击 —— 列表在这个高度本来就只剩 5 行，
+        // 盖掉两行等于让用户没法用。
+        set_size_request (620, 560);
         icon_name = "appimage-manager";
 
         // 用原生窗口装饰（不再 set_titlebar），最小化/最大化/关闭由窗口
@@ -176,9 +193,9 @@ public class MainWindow : Gtk.ApplicationWindow {
         toolbar.get_style_context ().add_class ("app-toolbar");
 
         refresh_btn = new Gtk.Button ();
-        refresh_btn.set_tooltip_text ("重新扫描 (F5)");
+        refresh_btn.set_tooltip_text (I18n.s ("重新扫描 (F5)"));
         refresh_btn.set_always_show_image (true);
-        refresh_btn.set_label ("重新扫描");
+        refresh_btn.set_label (I18n.s ("重新扫描"));
         var refresh_icon = new Gtk.Image.from_icon_name ("view-refresh-symbolic",
                                                          Gtk.IconSize.BUTTON);
         refresh_btn.set_image (refresh_icon);
@@ -189,12 +206,12 @@ public class MainWindow : Gtk.ApplicationWindow {
         toolbar.pack_start (spinner, false, false, 0);
 
         search = new Gtk.SearchEntry ();
-        search.set_placeholder_text ("搜索名称或路径…");
+        search.set_placeholder_text (I18n.s ("搜索名称或路径…"));
         search.set_width_chars (24);
         toolbar.pack_start (search, false, false, 0);
 
         // 右侧实时统计
-        subtitle_label = new Gtk.Label ("正在初始化…");
+        subtitle_label = new Gtk.Label (I18n.s ("正在初始化…"));
         subtitle_label.get_style_context ().add_class ("app-subtitle");
         subtitle_label.set_ellipsize (Pango.EllipsizeMode.END);
         toolbar.pack_end (subtitle_label, false, false, 0);
@@ -268,16 +285,16 @@ public class MainWindow : Gtk.ApplicationWindow {
                                                            Gtk.IconSize.MENU);
             remove.set_image (close_icon);
             remove.set_relief (Gtk.ReliefStyle.NONE);
-            remove.set_tooltip_text ("移除此目录");
+            remove.set_tooltip_text (I18n.s ("移除此目录"));
             string target = d;
             remove.clicked.connect (() => on_remove_dir (target));
             chip.pack_start (remove, false, false, 0);
 
-            chip.set_tooltip_text (AppPath.is_dir (d) ? d : d + "\n（目录不存在）");
+            chip.set_tooltip_text (AppPath.is_dir (d) ? d : d + I18n.s ("\n（目录不存在）"));
             dir_box.pack_start (chip, false, false, 0);
         }
 
-        var add = new Gtk.Button.with_label ("+ 添加目录");
+        var add = new Gtk.Button.with_label (I18n.s ("+ 添加目录"));
         add.set_relief (Gtk.ReliefStyle.NORMAL);
         add.clicked.connect (() => on_add_dir ());
         dir_box.pack_start (add, false, false, 0);
@@ -290,16 +307,16 @@ public class MainWindow : Gtk.ApplicationWindow {
         filter_bar_widget.get_style_context ().add_class ("filter-bar");
 
         filter_combo = new Gtk.ComboBoxText ();
-        filter_combo.append_text ("全部");
-        filter_combo.append_text ("新发现");
-        filter_combo.append_text ("已创建");
-        filter_combo.append_text ("外部创建");
-        filter_combo.append_text ("失效");
-        filter_combo.append_text ("可优化");
+        filter_combo.append_text (I18n.s ("全部"));
+        filter_combo.append_text (I18n.s ("新发现"));
+        filter_combo.append_text (I18n.s ("已创建"));
+        filter_combo.append_text (I18n.s ("外部创建"));
+        filter_combo.append_text (I18n.s ("失效"));
+        filter_combo.append_text (I18n.s ("可优化"));
         filter_combo.set_active (0);
         filter_bar_widget.pack_start (filter_combo, false, false, 0);
 
-        select_all = new Gtk.CheckButton.with_label ("全选");
+        select_all = new Gtk.CheckButton.with_label (I18n.s ("全选"));
         filter_bar_widget.pack_start (select_all, false, false, 0);
 
         sel_count = new Gtk.Label ("");
@@ -313,16 +330,16 @@ public class MainWindow : Gtk.ApplicationWindow {
         var sep = new Gtk.Separator (Gtk.Orientation.VERTICAL);
         filter_bar_widget.pack_start (sep, false, false, 4);
 
-        bar_create = mk_action ("⚡ 创建", "为勾选的 AppImage 创建桌面启动器", () => {
-            on_bar_create (); return false; });
-        bar_repair = mk_action ("🔧 修复", "检查并修复勾选项的 .desktop 文件", () => {
-            on_bar_repair (); return false; });
-        bar_claim  = mk_action ("🔗 认领", "把外部创建的启动器纳入本工具管理", () => {
-            on_bar_claim (); return false; });
-        bar_icon   = mk_action ("🖼 图标", "为勾选项重新提取图标", () => {
-            on_bar_icon (); return false; });
-        bar_delete = mk_action ("🗑 删除", "删除勾选项对应的桌面启动器", () => {
-            on_bar_delete (); return false; });
+        bar_create = mk_action (I18n.s ("创建"), I18n.s ("为勾选的 AppImage 创建桌面启动器"), () => {
+            on_bar_create (); return false; }, "list-add-symbolic");
+        bar_repair = mk_action (I18n.s ("修复"), I18n.s ("检查并修复勾选项的 .desktop 文件"), () => {
+            on_bar_repair (); return false; }, "emblem-system-symbolic");
+        bar_claim  = mk_action (I18n.s ("认领"), I18n.s ("把外部创建的启动器纳入本工具管理"), () => {
+            on_bar_claim (); return false; }, "link-symbolic");
+        bar_icon   = mk_action (I18n.s ("图标"), I18n.s ("为勾选项重新提取图标"), () => {
+            on_bar_icon (); return false; }, "image-missing-symbolic");
+        bar_delete = mk_action (I18n.s ("删除"), I18n.s ("删除勾选项对应的桌面启动器"), () => {
+            on_bar_delete (); return false; }, "list-remove-symbolic");
 
         foreach (var b in new Gtk.Button[] { bar_create, bar_repair, bar_claim,
                                              bar_icon, bar_delete })
@@ -399,7 +416,7 @@ public class MainWindow : Gtk.ApplicationWindow {
         txt_name.set_property ("ellipsize", Pango.EllipsizeMode.END);
         txt_name.set_property ("ellipsize-set", true);
         var col_name = new Gtk.TreeViewColumn.with_attributes (
-            "名称", txt_name, "text", Col.NAME, null);
+            I18n.s ("名称"), txt_name, "text", Col.NAME, null);
         col_name.set_expand (true);
         col_name.set_resizable (true);
         col_name.set_min_width (140);
@@ -410,7 +427,7 @@ public class MainWindow : Gtk.ApplicationWindow {
         var txt_size = new Gtk.CellRendererText ();
         txt_size.set_property ("xalign", 1.0f);
         var col_size = new Gtk.TreeViewColumn.with_attributes (
-            "大小", txt_size, "text", Col.SIZE, null);
+            I18n.s ("大小"), txt_size, "text", Col.SIZE, null);
         col_size.set_sizing (Gtk.TreeViewColumnSizing.FIXED);
         col_size.set_fixed_width (90);
         col_size.set_sort_column_id (Col.SIZE);
@@ -424,7 +441,7 @@ public class MainWindow : Gtk.ApplicationWindow {
         pill_col.add_attribute (pix_pill, "pixbuf", Col.PILL);
         pill_col.set_sizing (Gtk.TreeViewColumnSizing.FIXED);
         pill_col.set_fixed_width (118);
-        pill_col.set_title ("状态");
+        pill_col.set_title (I18n.s ("状态"));
         tree.append_column (pill_col);
 
         // 路径
@@ -432,7 +449,7 @@ public class MainWindow : Gtk.ApplicationWindow {
         txt_path.set_property ("ellipsize", Pango.EllipsizeMode.MIDDLE);
         txt_path.set_property ("ellipsize-set", true);
         var col_path = new Gtk.TreeViewColumn.with_attributes (
-            "路径", txt_path, "text", Col.PATH, null);
+            I18n.s ("路径"), txt_path, "text", Col.PATH, null);
         col_path.set_expand (true);
         col_path.set_resizable (true);
         col_path.set_min_width (160);
@@ -525,23 +542,23 @@ public class MainWindow : Gtk.ApplicationWindow {
 
         // 右键菜单走 resolve_context_targets()：刚右键的那一行优先，
         // 只有该行本就属于批量目标时才回退到批量语义。
-        ctx_create = mk_menu_item ("⚡  创建启动器", () => { run_bar_create (resolve_context_targets ()); });
-        ctx_repair = mk_menu_item ("🔧  修复问题…",    () => { run_bar_repair (resolve_context_targets ()); });
-        ctx_claim  = mk_menu_item ("🔗  认领…",        () => { run_bar_claim (resolve_context_targets ()); });
+        ctx_create = mk_menu_item (I18n.s ("创建启动器"), () => { run_bar_create (resolve_context_targets ()); }, "list-add-symbolic");
+        ctx_repair = mk_menu_item (I18n.s ("修复问题…"),    () => { run_bar_repair (resolve_context_targets ()); }, "emblem-system-symbolic");
+        ctx_claim  = mk_menu_item (I18n.s ("认领…"),        () => { run_bar_claim (resolve_context_targets ()); }, "link-symbolic");
         context_menu.append (ctx_create);
         context_menu.append (ctx_repair);
         context_menu.append (ctx_claim);
         context_menu.append (new Gtk.SeparatorMenuItem ());
 
-        ctx_edit      = mk_menu_item ("✎  编辑…",          () => { run_act_edit (resolve_context_targets ()); });
-        ctx_delete    = mk_menu_item ("🗑  删除",          () => { run_bar_delete (resolve_context_targets ()); });
+        ctx_edit      = mk_menu_item (I18n.s ("编辑…"),          () => { run_act_edit (resolve_context_targets ()); }, "document-edit-symbolic");
+        ctx_delete    = mk_menu_item (I18n.s ("删除"),          () => { run_bar_delete (resolve_context_targets ()); }, "list-remove-symbolic");
         context_menu.append (ctx_edit);
         context_menu.append (ctx_delete);
         context_menu.append (new Gtk.SeparatorMenuItem ());
 
-        ctx_open_dir  = mk_menu_item ("📂  打开所在目录",  () => { run_act_open_dir (resolve_context_targets ()); });
-        ctx_test      = mk_menu_item ("▶  测试启动",       () => { run_act_test (resolve_context_targets ()); });
-        ctx_copy      = mk_menu_item ("⧉  复制路径",       () => { run_act_copy_path (resolve_context_targets ()); });
+        ctx_open_dir  = mk_menu_item (I18n.s ("打开所在目录"),  () => { run_act_open_dir (resolve_context_targets ()); }, "folder-symbolic");
+        ctx_test      = mk_menu_item (I18n.s ("测试启动"),       () => { run_act_test (resolve_context_targets ()); }, "media-playback-start-symbolic");
+        ctx_copy      = mk_menu_item (I18n.s ("复制路径"),       () => { run_act_copy_path (resolve_context_targets ()); }, "edit-copy-symbolic");
         context_menu.append (ctx_open_dir);
         context_menu.append (ctx_test);
         context_menu.append (ctx_copy);
@@ -550,8 +567,25 @@ public class MainWindow : Gtk.ApplicationWindow {
         context_menu.show_all ();
     }
 
-    private Gtk.MenuItem mk_menu_item (string label, owned SimpleAction cb) {
-        var item = new Gtk.MenuItem.with_label (label);
+    /**
+     * 同 mk_action：图标走 GTK symbolic，不用 emoji（原因见那里）。
+     *
+     * 注意 Gtk.MenuItem 只能有一个子控件（它是 GtkBin，add 第二个会静默
+     * 丢弃第一个）。曾经先 add 图标再 add 文字，结果菜单里只剩图标、
+     * 文字全没了 —— 而且不报任何错。必须先装进 Box 再整体 add。
+     */
+    private Gtk.MenuItem mk_menu_item (string label, owned SimpleAction cb,
+                                       string? icon_name = null) {
+        var item = new Gtk.MenuItem ();
+        var box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8);
+        if (icon_name != null)
+            box.pack_start (new Gtk.Image.from_icon_name (icon_name,
+                                                          Gtk.IconSize.MENU),
+                            false, false, 0);
+        var lbl = new Gtk.Label (label);
+        lbl.xalign = 0.0f;
+        box.pack_start (lbl, true, true, 0);
+        item.add (box);
         item.activate.connect (() => { cb (); });
         return item;
     }
@@ -576,25 +610,25 @@ public class MainWindow : Gtk.ApplicationWindow {
         var edit_target = first_with_launcher (targets);
         var test_target = first_testable (targets);
         set_menu_item (ctx_create, n_new > 0,
-            n_new > 0 ? "创建启动器" : "没有「新发现」的条目");
+            n_new > 0 ? I18n.s ("创建启动器") : I18n.s ("没有「新发现」的条目"));
         set_menu_item (ctx_repair, n_problem > 0,
-            n_problem > 0 ? "修复问题" : "没有需要修复的问题");
+            n_problem > 0 ? I18n.s ("修复问题") : I18n.s ("没有需要修复的问题"));
         set_menu_item (ctx_claim, targets.length > 0,
             targets.length > 0
-                ? "认领：把外部创建的启动器纳入管理，或手动指定一个 .desktop 文件"
-                : "先选中要处理的条目");
+                ? I18n.s ("认领：把外部创建的启动器纳入管理，或手动指定一个 .desktop 文件")
+                : I18n.s ("先选中要处理的条目"));
         set_menu_item (ctx_edit, edit_target != null,
             edit_target != null
-                ? "编辑「%s」的启动器".printf (edit_target.get_best_name ())
-                : "这个条目还没有启动器");
+                ? I18n.s ("编辑「%s」的启动器").printf (edit_target.get_best_name ())
+                : I18n.s ("这个条目还没有启动器"));
         set_menu_item (ctx_delete, has_reg,
-            has_reg ? "删除" : "这个条目还没有启动器");
-        set_menu_item (ctx_open_dir, targets.length > 0, "打开所在目录");
+            has_reg ? I18n.s ("删除") : I18n.s ("这个条目还没有启动器"));
+        set_menu_item (ctx_open_dir, targets.length > 0, I18n.s ("打开所在目录"));
         set_menu_item (ctx_test, test_target != null,
             test_target != null
-                ? "测试启动「%s」".printf (test_target.get_best_name ())
-                : "AppImage 文件不存在，无法测试");
-        set_menu_item (ctx_copy, targets.length > 0, "复制路径");
+                ? I18n.s ("测试启动「%s」").printf (test_target.get_best_name ())
+                : I18n.s ("AppImage 文件不存在，无法测试"));
+        set_menu_item (ctx_copy, targets.length > 0, I18n.s ("复制路径"));
     }
 
     private void set_menu_item (Gtk.MenuItem item, bool sensitive, string tip) {
@@ -617,16 +651,16 @@ public class MainWindow : Gtk.ApplicationWindow {
         overlay_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 4);
         overlay_box.get_style_context ().add_class ("action-overlay");
 
-        overlay_label = new Gtk.Label ("已选 0 项");
+        overlay_label = new Gtk.Label (I18n.s ("已选 0 项"));
         overlay_box.pack_start (overlay_label, false, false, 0);
 
         overlay_box.pack_start (new Gtk.Separator (Gtk.Orientation.VERTICAL),
                                 false, false, 2);
 
-        act_edit      = mk_action ("✎ 编辑", "编辑当前条目的启动器", () => { on_act_edit (); return false; });
-        act_test      = mk_action ("▶ 测试", "试运行这个 AppImage", () => { on_act_test (); return false; });
-        act_open_dir  = mk_action ("📂 目录", "在文件管理器中打开所在目录", () => { on_act_open_dir (); return false; });
-        act_copy_path = mk_action ("⧉ 复制", "复制 AppImage 完整路径", () => { on_act_copy_path (); return false; });
+        act_edit      = mk_action (I18n.s ("编辑"), I18n.s ("编辑当前条目的启动器"), () => { on_act_edit (); return false; }, "document-edit-symbolic");
+        act_test      = mk_action (I18n.s ("测试"), I18n.s ("试运行这个 AppImage"), () => { on_act_test (); return false; }, "media-playback-start-symbolic");
+        act_open_dir  = mk_action (I18n.s ("目录"), I18n.s ("在文件管理器中打开所在目录"), () => { on_act_open_dir (); return false; }, "folder-symbolic");
+        act_copy_path = mk_action (I18n.s ("复制"), I18n.s ("复制 AppImage 完整路径"), () => { on_act_copy_path (); return false; }, "edit-copy-symbolic");
 
         foreach (var b in new Gtk.Button[] { act_edit, act_test,
                                              act_open_dir, act_copy_path })
@@ -670,19 +704,37 @@ public class MainWindow : Gtk.ApplicationWindow {
         icon.set_pixel_size (48);
         box.pack_start (icon, false, false, 0);
 
-        var title = new Gtk.Label ("这个目录里没有找到 AppImage");
+        var title = new Gtk.Label (I18n.s ("这个目录里没有找到 AppImage"));
         title.get_style_context ().add_class ("title");
         box.pack_start (title, false, false, 0);
 
-        var hint = new Gtk.Label ("换一个目录，或在菜单里点「视图 → 重新扫描」再试一次");
+        var hint = new Gtk.Label (I18n.s ("换一个目录，或在菜单里点「视图 → 重新扫描」再试一次"));
         hint.get_style_context ().add_class ("hint");
         box.pack_start (hint, false, false, 0);
 
         return box;
     }
 
-    private Gtk.Button mk_action (string label, string tip, owned GLib.SourceFunc cb) {
-        var b = new Gtk.Button.with_label (label);
+    /**
+     * 带图标与文字的操作按钮。
+     *
+     * icon_name 传空就是纯文字按钮。
+     *
+     * 这里必须用 GTK 图标主题的 symbolic 图标，不能用 emoji：emoji
+     * 依赖系统装了彩色 emoji 字体，绝大多数 Linux 桌面没有，缺字形时
+     * 渲染成空白（实测 ⚡🔧🔗🖼🗑📂 在 DejaVu Sans 下全是空的）。
+     * symbolic 图标由 GTK 主题保证存在，跨桌面环境稳定。
+     */
+    private Gtk.Button mk_action (string label, string tip,
+                                  owned GLib.SourceFunc cb,
+                                  string? icon_name = null) {
+        var b = new Gtk.Button ();
+        if (icon_name != null) {
+            var img = new Gtk.Image.from_icon_name (icon_name, Gtk.IconSize.BUTTON);
+            b.set_image (img);
+            b.set_always_show_image (true);
+        }
+        b.set_label (label);
         b.set_tooltip_text (tip);
         b.set_sensitive (false);
         b.clicked.connect (() => { cb (); });
@@ -698,9 +750,9 @@ public class MainWindow : Gtk.ApplicationWindow {
         infobar_label.set_line_wrap (true);
         infobar.get_content_area ().add (infobar_label);
 
-        infobar_action = new Gtk.Button.with_label ("查看并清理");
+        infobar_action = new Gtk.Button.with_label (I18n.s ("查看并清理"));
         infobar.add_action_widget (infobar_action, Gtk.ResponseType.ACCEPT);
-        infobar.add_button ("知道了", Gtk.ResponseType.CLOSE);
+        infobar.add_button (I18n.s ("知道了"), Gtk.ResponseType.CLOSE);
     }
 
     /**
@@ -708,20 +760,24 @@ public class MainWindow : Gtk.ApplicationWindow {
      *
      * GTK 的陷阱（3.24 实测）：只要信息条带着 no_show_all，调用
      * show_all () 会被整个跳过 —— 哪怕直接对它自己调用也一样，连
-     * label 都不会显示。此前每条消息都"发"了却永远看不见。这里先
+     * label 都不会显示。此前每条消息都I18n.s ("发")了却永远看不见。这里先
      * 临时摘掉 no_show_all，show_all 完再装回去，保证子控件全部
      * 显示、又不会在启动时被 window.show_all() 带上。
      */
     private void present_infobar (bool cleanup_action) {
+        present_infobar_with (cleanup_action ? InfobarAction.CLEANUP : InfobarAction.NONE);
+    }
+
+    private void present_infobar_with (InfobarAction mode) {
         infobar.set_no_show_all (false);
         infobar.show_all ();
         infobar.set_no_show_all (true);
 
-        infobar_action_is_cleanup = cleanup_action;
-        if (cleanup_action)
-            infobar_action.show ();
-        else
+        infobar_action_mode = mode;
+        if (mode == InfobarAction.NONE)
             infobar_action.hide ();
+        else
+            infobar_action.show ();
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -742,12 +798,12 @@ public class MainWindow : Gtk.ApplicationWindow {
 
         var title = new Gtk.Label (null);
         title.use_markup = true;
-        title.label = "<span size='x-large' weight='bold'>还没有添加扫描目录</span>";
+        title.label = I18n.s ("<span size='x-large' weight='bold'>还没有添加扫描目录</span>");
         box.pack_start (title, false, false, 0);
 
         var hint = new Gtk.Label (
-            "添加一个目录，程序会扫描其中的 AppImage，\n"
-            + "并帮你创建规范的桌面启动器。");
+            I18n.s ("添加一个目录，程序会扫描其中的 AppImage，\n")
+            + I18n.s ("并帮你创建规范的桌面启动器。"));
         hint.set_justify (Gtk.Justification.CENTER);
         hint.get_style_context ().add_class ("dim-label");
         box.pack_start (hint, false, false, 0);
@@ -755,12 +811,12 @@ public class MainWindow : Gtk.ApplicationWindow {
         var btn_row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 10);
         btn_row.set_halign (Gtk.Align.CENTER);
 
-        var add = new Gtk.Button.with_label ("添加目录…");
+        var add = new Gtk.Button.with_label (I18n.s ("添加目录…"));
         add.get_style_context ().add_class ("suggested-action");
         add.clicked.connect (() => on_add_dir ());
         btn_row.pack_start (add, false, false, 0);
 
-        var common = new Gtk.Button.with_label ("看看常见位置");
+        var common = new Gtk.Button.with_label (I18n.s ("看看常见位置"));
         common.clicked.connect (() => on_common_locations ());
         btn_row.pack_start (common, false, false, 0);
 
@@ -804,9 +860,9 @@ public class MainWindow : Gtk.ApplicationWindow {
             "/opt/appimages"
         };
 
-        var dlg = new Gtk.Dialog.with_buttons ("常见位置", this,
-            Gtk.DialogFlags.MODAL, "取消", Gtk.ResponseType.CANCEL,
-            "添加选中的目录", Gtk.ResponseType.OK);
+        var dlg = new Gtk.Dialog.with_buttons (I18n.s ("常见位置"), this,
+            Gtk.DialogFlags.MODAL, I18n.s ("取消"), Gtk.ResponseType.CANCEL,
+            I18n.s ("添加选中的目录"), Gtk.ResponseType.OK);
         dlg.set_default_size (560, 320);
         dlg.set_border_width (12);
 
@@ -815,7 +871,7 @@ public class MainWindow : Gtk.ApplicationWindow {
         var paths = new GLib.GenericArray<string> ();
 
         var head = new Gtk.Label (
-            "勾选要扫描的目录。不存在的会一并创建。");
+            I18n.s ("勾选要扫描的目录。不存在的会一并创建。"));
         head.set_xalign (0.0f);
         head.get_style_context ().add_class ("dim-label");
         box.pack_start (head, false, false, 6);
@@ -835,7 +891,7 @@ public class MainWindow : Gtk.ApplicationWindow {
             lab.set_ellipsize (Pango.EllipsizeMode.MIDDLE);
             row.pack_start (lab, true, true, 0);
 
-            var st = new Gtk.Label (exists ? "已存在" : "不存在，将创建");
+            var st = new Gtk.Label (exists ? I18n.s ("已存在") : I18n.s ("不存在，将创建"));
             st.get_style_context ().add_class ("dim-label");
             row.pack_start (st, false, false, 0);
 
@@ -877,7 +933,7 @@ public class MainWindow : Gtk.ApplicationWindow {
     private void install_css () {
         string css_path = find_css ();
         if (css_path == "") {
-            warning ("未找到 style.css，使用默认外观");
+            warning (I18n.s ("未找到 style.css，使用默认外观"));
             return;
         }
         try {
@@ -889,7 +945,7 @@ public class MainWindow : Gtk.ApplicationWindow {
                     screen, provider,
                     Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
         } catch (GLib.Error e) {
-            warning ("样式表加载失败: %s", e.message);
+            warning (I18n.s ("样式表加载失败: %s"), e.message);
         }
     }
 
@@ -965,7 +1021,7 @@ public class MainWindow : Gtk.ApplicationWindow {
         if (pb != null)
             Gtk.Window.set_default_icon (pb);
         else
-            warning ("未找到应用图标，任务栏会显示通用占位图标");
+            warning (I18n.s ("未找到应用图标，任务栏会显示通用占位图标"));
     }
 
     private void install_accels () {
@@ -1007,12 +1063,16 @@ public class MainWindow : Gtk.ApplicationWindow {
         tree.row_activated.connect ((path, col) => on_row_activated (path));
 
         infobar.response.connect ((id) => {
-            bool cleanup = infobar_action_is_cleanup;
+            var mode = infobar_action_mode;
             infobar.hide ();
-            // ACCEPT 来自那个「查看并清理」按钮。只有当前消息确实是
-            // 清理类消息时才执行，防止隐藏中的按钮被程序化触发。
-            if (id == Gtk.ResponseType.ACCEPT && cleanup)
+            // ACCEPT 来自提示条上那个按钮。只有当前模式对得上才执行，
+            // 防止隐藏中的按钮被程序化触发时做出错误的动作。
+            if (id != Gtk.ResponseType.ACCEPT)
+                return;
+            if (mode == InfobarAction.CLEANUP)
                 on_menu_cleanup ();
+            else if (mode == InfobarAction.RESTART)
+                restart_now ();
         });
 
         key_press_event.connect ((ev) => {
@@ -1026,6 +1086,13 @@ public class MainWindow : Gtk.ApplicationWindow {
         // 双击标题栏 / WM 快捷键也能最大化，那条路径不经过菜单，
         // 得靠这个信号把菜单勾选同步回来。
         window_state_event.connect (on_window_state_event);
+
+        // 拖动窗口改变宽度时，浮层的显隐要跟着重算（窄了就收起）
+        size_allocate.connect (() => {
+            if (overlay_revealer.get_reveal_child () &&
+                get_allocated_width () < MIN_OVERLAY_WIDTH)
+                overlay_revealer.set_reveal_child (false);
+        });
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -1153,10 +1220,10 @@ public class MainWindow : Gtk.ApplicationWindow {
         int broken = store.broken_entries.length;
         int dirs = config.scan_dirs ().length;
 
-        string s = "%d 个目录 · %d 个 AppImage · %d 个待创建"
+        string s = I18n.s ("%d 个目录 · %d 个 AppImage · %d 个待创建")
             .printf (dirs, total, pending);
         if (broken > 0)
-            s += " · %d 个失效".printf (broken);
+            s += I18n.s (" · %d 个失效").printf (broken);
         subtitle_label.set_text (s);
     }
 
@@ -1166,7 +1233,7 @@ public class MainWindow : Gtk.ApplicationWindow {
             infobar.hide ();
             return;
         }
-        infobar_label.set_text ("⚠ 发现 %d 个失效的启动器（指向的 AppImage 已不存在）".printf (broken));
+        infobar_label.set_text (I18n.s ("⚠ 发现 %d 个失效的启动器（指向的 AppImage 已不存在）").printf (broken));
         infobar.set_message_type (Gtk.MessageType.WARNING);
         // 只有这条（失效/孤儿）才配「查看并清理」入口
         present_infobar (true);
@@ -1302,12 +1369,16 @@ public class MainWindow : Gtk.ApplicationWindow {
         apply_bar_states (targets);
 
         // ── 浮层：单条，只听行选中 ──
-        bool show = (selected.length > 0);
+        //
+        // 窗口窄到浮层会盖住大半个列表时就别显示了 —— 窄窗口本来就该靠
+        // 常驻操作条和右键菜单，浮层是给宽窗口的便捷入口。
+        bool wide_enough = (get_allocated_width () >= MIN_OVERLAY_WIDTH);
+        bool show = (selected.length > 0) && wide_enough;
         overlay_revealer.set_reveal_child (show);
         if (show) {
             overlay_label.set_text (selected.length == 1
-                ? "选中 1 项"
-                : "选中 %d 项".printf (selected.length));
+                ? I18n.s ("选中 1 项")
+                : I18n.s ("选中 %d 项").printf (selected.length));
             apply_overlay_states (selected);
         }
 
@@ -1330,7 +1401,7 @@ public class MainWindow : Gtk.ApplicationWindow {
         }
         suppress_select_all = false;
 
-        sel_count.set_text (checked > 0 ? "已勾选 %d 项".printf (checked) : "");
+        sel_count.set_text (checked > 0 ? I18n.s ("已勾选 %d 项").printf (checked) : "");
     }
 
     private void on_select_all_toggled () {
@@ -1363,36 +1434,36 @@ public class MainWindow : Gtk.ApplicationWindow {
         bool empty = (targets.length == 0);
 
         set_btn (bar_create, !empty && n_new > 0,
-            empty ? "先勾选要处理的 AppImage"
-                  : (n_new > 0 ? "为 %d 个条目创建启动器".printf (n_new)
-                               : "勾选的条目都已经有启动器了"));
+            empty ? I18n.s ("先勾选要处理的 AppImage")
+                  : (n_new > 0 ? I18n.s ("为 %d 个条目创建启动器").printf (n_new)
+                               : I18n.s ("勾选的条目都已经有启动器了")));
 
         set_btn (bar_repair, !empty && n_problem > 0,
-            empty ? "先勾选要处理的条目"
-                  : (n_problem > 0 ? "检查并修复 %d 个条目的 .desktop".printf (n_problem)
-                                   : "勾选的条目没有需要修复的问题"));
+            empty ? I18n.s ("先勾选要处理的条目")
+                  : (n_problem > 0 ? I18n.s ("检查并修复 %d 个条目的 .desktop").printf (n_problem)
+                                   : I18n.s ("勾选的条目没有需要修复的问题")));
 
         set_btn (bar_claim, !empty,
-            empty ? "先勾选要处理的条目"
+            empty ? I18n.s ("先勾选要处理的条目")
                   : (n_ext > 0
-                        ? "把 %d 个外部创建的启动器纳入管理".printf (n_ext)
-                        : "没有可自动认领的条目。认领用于接管已存在但不是本工具创建的启动器 —— 点这里可以手动指定"));
+                        ? I18n.s ("把 %d 个外部创建的启动器纳入管理").printf (n_ext)
+                        : I18n.s ("没有可自动认领的条目。认领用于接管已存在但不是本工具创建的启动器 —— 点这里可以手动指定")));
 
         set_btn (bar_icon, !empty && n_no_icon > 0,
-            empty ? "先勾选要处理的条目"
-                  : (n_no_icon > 0 ? "为 %d 个条目提取图标".printf (n_no_icon)
-                                   : "图标都已提取过了"));
+            empty ? I18n.s ("先勾选要处理的条目")
+                  : (n_no_icon > 0 ? I18n.s ("为 %d 个条目提取图标").printf (n_no_icon)
+                                   : I18n.s ("图标都已提取过了")));
 
         set_btn (bar_delete, !empty && (n_reg + n_ext) > 0,
-            empty ? "先勾选要处理的条目"
+            empty ? I18n.s ("先勾选要处理的条目")
                   : ((n_reg + n_ext) > 0
-                        ? "删除 %d 个启动器（会先备份）".printf (n_reg + n_ext)
-                        : "勾选的条目还没有启动器"));
+                        ? I18n.s ("删除 %d 个启动器（会先备份）").printf (n_reg + n_ext)
+                        : I18n.s ("勾选的条目还没有启动器")));
 
         // 失效条目单独提示
         if (!empty && n_broken > 0 && targets.length == n_broken) {
             bar_repair.set_tooltip_text (
-                "这些条目的 AppImage 已不存在，请用菜单里的「失效与孤儿清理」");
+                I18n.s ("这些条目的 AppImage 已不存在，请用菜单里的「失效与孤儿清理」"));
         }
     }
 
@@ -1403,16 +1474,16 @@ public class MainWindow : Gtk.ApplicationWindow {
 
         set_btn (act_edit, edit_target != null,
             edit_target != null
-                ? "编辑「%s」的启动器".printf (edit_target.get_best_name ())
-                : "所选条目都还没有启动器，先用「⚡ 创建」");
+                ? I18n.s ("编辑「%s」的启动器").printf (edit_target.get_best_name ())
+                : I18n.s ("所选条目都还没有启动器，先用「创建」"));
         set_btn (act_test, test_target != null,
             test_target != null
-                ? "测试启动「%s」".printf (test_target.get_best_name ())
-                : "所选条目的 AppImage 文件都不存在");
+                ? I18n.s ("测试启动「%s」").printf (test_target.get_best_name ())
+                : I18n.s ("所选条目的 AppImage 文件都不存在"));
         set_btn (act_open_dir, sel.length > 0 && AppPath.is_dir (
                      GLib.Path.get_dirname (sel[0].path)),
-            "在文件管理器中打开所在目录");
-        set_btn (act_copy_path, sel.length > 0, "复制完整路径");
+            I18n.s ("在文件管理器中打开所在目录"));
+        set_btn (act_copy_path, sel.length > 0, I18n.s ("复制完整路径"));
     }
 
     /** 设置按钮可用性，禁用时把原因写进 tooltip */
@@ -1458,7 +1529,7 @@ public class MainWindow : Gtk.ApplicationWindow {
     private void run_bar_create (AppEntry[] src) {
         var targets = filter_by (src, MatchState.NEW);
         if (targets.length == 0) {
-            show_msg ("要创建的目标里没有「新发现」的条目。");
+            show_msg (I18n.s ("要创建的目标里没有「新发现」的条目。"));
             return;
         }
         do_create (targets);
@@ -1472,7 +1543,7 @@ public class MainWindow : Gtk.ApplicationWindow {
             if (e.health == HealthState.IMPROVABLE || e.health == HealthState.CORRUPT)
                 targets.add (e);
         if (targets.length == 0) {
-            show_msg ("要处理的目标里没有需要修复的条目。");
+            show_msg (I18n.s ("要处理的目标里没有需要修复的条目。"));
             return;
         }
         do_repair (targets.steal ());
@@ -1499,7 +1570,7 @@ public class MainWindow : Gtk.ApplicationWindow {
             if (!e.icon_extracted)
                 targets.add (e);
         if (targets.length == 0) {
-            show_msg ("要处理的目标里图标都已提取过了。");
+            show_msg (I18n.s ("要处理的目标里图标都已提取过了。"));
             return;
         }
         do_extract_icons (targets.steal ());
@@ -1516,10 +1587,10 @@ public class MainWindow : Gtk.ApplicationWindow {
             // 不弹对话框，但必须给反馈 —— 之前这里静默吞掉，
             // 选中「新发现」按 Delete 会像是按键失灵。
             if (all.length == 0)
-                show_msg ("没有可删除的条目：请先勾选或点选一行。");
+                show_msg (I18n.s ("没有可删除的条目：请先勾选或点选一行。"));
             else
-                show_msg ("选中的条目里没有可删除的启动器：\n"
-                          + "「新发现」条目还没有创建启动器，先创建好再删除。");
+                show_msg (I18n.s ("选中的条目里没有可删除的启动器：\n")
+                          + I18n.s ("「新发现」条目还没有创建启动器，先创建好再删除。"));
             return;
         }
         confirm_delete (targets.steal ());
@@ -1560,7 +1631,7 @@ public class MainWindow : Gtk.ApplicationWindow {
     private void run_act_edit (AppEntry[] sel) {
         var e = first_with_launcher (sel);
         if (e == null) {
-            show_msg ("选中的条目都没有对应的 .desktop 文件，先用「⚡ 创建」建一个。");
+            show_msg (I18n.s ("选中的条目都没有对应的 .desktop 文件，先用「创建」建一个。"));
             return;
         }
         do_edit (e);
@@ -1571,7 +1642,7 @@ public class MainWindow : Gtk.ApplicationWindow {
     private void run_act_test (AppEntry[] sel) {
         var e = first_testable (sel);
         if (e == null) {
-            show_msg ("选中的条目都没有可试运行的 AppImage 文件。");
+            show_msg (I18n.s ("选中的条目都没有可试运行的 AppImage 文件。"));
             return;
         }
         do_test (e);
@@ -1584,7 +1655,7 @@ public class MainWindow : Gtk.ApplicationWindow {
             return;
         string dir = GLib.Path.get_dirname (sel[0].path);
         if (!AppPath.is_dir (dir)) {
-            show_msg ("目录不存在：%s".printf (dir));
+            show_msg (I18n.s ("目录不存在：%s").printf (dir));
             return;
         }
         open_in_file_manager (dir);
@@ -1603,8 +1674,8 @@ public class MainWindow : Gtk.ApplicationWindow {
             Gdk.Display.get_default (), Gdk.SELECTION_CLIPBOARD);
         cb.set_text (text, -1);
         show_info (sel.length == 1
-            ? "✓ 路径已复制"
-            : "✓ 已复制 %d 条路径".printf (sel.length));
+            ? I18n.s ("✓ 路径已复制")
+            : I18n.s ("✓ 已复制 %d 条路径").printf (sel.length));
     }
 
     private string[] paths_of (AppEntry[] list) {
@@ -1620,7 +1691,7 @@ public class MainWindow : Gtk.ApplicationWindow {
             GLib.AppInfo.launch_default_for_uri (
                 GLib.File.new_for_path (dir).get_uri (), null);
         } catch (GLib.Error e) {
-            show_msg ("无法打开目录：%s".printf (e.message));
+            show_msg (I18n.s ("无法打开目录：%s").printf (e.message));
         }
     }
 
@@ -1628,8 +1699,8 @@ public class MainWindow : Gtk.ApplicationWindow {
         // 列清楚到底删什么：名称 + 对应的 .desktop 路径（右键菜单靠这个
         // 让用户确认操作对象就是自己右键的那一行，而不是别的勾选项）。
         var sb = new StringBuilder ();
-        sb.append ("将删除对应的 .desktop 文件。AppImage 本体不受影响，\n");
-        sb.append ("原文件会先备份，可随时从「修复菜单 → 修复历史」还原。\n");
+        sb.append (I18n.s ("将删除对应的 .desktop 文件。AppImage 本体不受影响，\n"));
+        sb.append (I18n.s ("原文件会先备份，可随时从「修复菜单 → 修复历史」还原。\n"));
 
         int shown = 0;
         foreach (var e in targets) {
@@ -1641,15 +1712,15 @@ public class MainWindow : Gtk.ApplicationWindow {
             shown++;
         }
         if (targets.length > shown)
-            sb.append ("\n\n…以及另外 %d 个".printf (targets.length - shown));
+            sb.append (I18n.s ("\n\n…以及另外 %d 个").printf (targets.length - shown));
 
         var dlg = new Gtk.MessageDialog (this,
             Gtk.DialogFlags.MODAL, Gtk.MessageType.QUESTION,
             Gtk.ButtonsType.NONE,
-            "删除 %d 个启动器？", targets.length);
+            I18n.s ("删除 %d 个启动器？"), targets.length);
         dlg.format_secondary_text (sb.str);
-        dlg.add_button ("取消", Gtk.ResponseType.CANCEL);
-        dlg.add_button ("删除", Gtk.ResponseType.OK);
+        dlg.add_button (I18n.s ("取消"), Gtk.ResponseType.CANCEL);
+        dlg.add_button (I18n.s ("删除"), Gtk.ResponseType.OK);
         dlg.set_default_response (Gtk.ResponseType.CANCEL);
         int r = dlg.run ();
         dlg.destroy ();
@@ -1660,9 +1731,9 @@ public class MainWindow : Gtk.ApplicationWindow {
         var res = Repair.delete_launchers (targets, config);
         store.rescan ();
         if (res.failed == 0)
-            show_info ("✓ 已删除 %d 个启动器".printf (res.created));
+            show_info (I18n.s ("✓ 已删除 %d 个启动器").printf (res.created));
         else
-            show_msg ("删除完成：成功 %d，失败 %d".printf (res.created, res.failed));
+            show_msg (I18n.s ("删除完成：成功 %d，失败 %d").printf (res.created, res.failed));
     }
 
     // ── 修复（接线 repair_entry）──────────────────────────────────
@@ -1700,10 +1771,10 @@ public class MainWindow : Gtk.ApplicationWindow {
         }
 
         if (fixed_count > 0)
-            show_info ("✓ 已修复 %d 个条目%s".printf (fixed_count,
-                skipped > 0 ? "，跳过 %d 个".printf (skipped) : ""));
+            show_info (I18n.s ("✓ 已修复 %d 个条目%s").printf (fixed_count,
+                skipped > 0 ? I18n.s ("，跳过 %d 个").printf (skipped) : ""));
         else if (skipped > 0)
-            show_msg ("没有条目被修复（跳过 %d 个）".printf (skipped));
+            show_msg (I18n.s ("没有条目被修复（跳过 %d 个）").printf (skipped));
     }
 
     // ── 认领（接线 claim_entry）───────────────────────────────────
@@ -1734,15 +1805,15 @@ public class MainWindow : Gtk.ApplicationWindow {
             store.rescan ();
         }
 
-        string tail = skipped > 0 ? "，跳过 %d 个".printf (skipped) : "";
+        string tail = skipped > 0 ? I18n.s ("，跳过 %d 个").printf (skipped) : "";
         if (failed == 0 && done > 0)
-            show_info ("✓ 已认领 %d 个启动器%s".printf (done, tail));
+            show_info (I18n.s ("✓ 已认领 %d 个启动器%s").printf (done, tail));
         else if (done > 0)
-            show_msg ("认领完成：成功 %d 个，失败 %d 个%s".printf (done, failed, tail));
+            show_msg (I18n.s ("认领完成：成功 %d 个，失败 %d 个%s").printf (done, failed, tail));
         else if (failed > 0)
-            show_msg ("认领失败：%d 个条目没能认领%s".printf (failed, tail));
+            show_msg (I18n.s ("认领失败：%d 个条目没能认领%s").printf (failed, tail));
         else
-            show_msg ("没有条目被认领。");
+            show_msg (I18n.s ("没有条目被认领。"));
     }
 
     /**
@@ -1814,13 +1885,13 @@ public class MainWindow : Gtk.ApplicationWindow {
 
         store.rescan ();
 
-        string msg = "✓ 已创建 %d 个启动器".printf (ok);
+        string msg = I18n.s ("✓ 已创建 %d 个启动器").printf (ok);
         if (skipped > 0)
-            msg += " · 跳过 %d 个".printf (skipped);
+            msg += I18n.s (" · 跳过 %d 个").printf (skipped);
         if (cancel_all)
-            msg += " · 已中止";
+            msg += I18n.s (" · 已中止");
         if (ok == 0 && skipped > 0 && !cancel_all)
-            msg = "没有创建任何启动器（跳过 %d 个）".printf (skipped);
+            msg = I18n.s ("没有创建任何启动器（跳过 %d 个）").printf (skipped);
 
         if (ok > 0)
             show_info (msg);
@@ -1839,7 +1910,7 @@ public class MainWindow : Gtk.ApplicationWindow {
 
         string verr = DesktopFiles.validate_content (content);
         if (verr != "") {
-            show_msg ("「%s」的内容没通过 desktop-file-validate：\n%s"
+            show_msg (I18n.s ("「%s」的内容没通过 desktop-file-validate：\n%s")
                       .printf (d.fields.name, verr));
             return false;
         }
@@ -1849,7 +1920,7 @@ public class MainWindow : Gtk.ApplicationWindow {
         string? werr;
         DesktopFiles.write_atomic (target, content, out werr);
         if (werr != null) {
-            show_msg ("写入失败：%s".printf (werr));
+            show_msg (I18n.s ("写入失败：%s").printf (werr));
             return false;
         }
 
@@ -1930,21 +2001,21 @@ public class MainWindow : Gtk.ApplicationWindow {
 
         var dlg = new Gtk.MessageDialog (this, Gtk.DialogFlags.MODAL,
             Gtk.MessageType.QUESTION, Gtk.ButtonsType.NONE,
-            "这个 AppImage 没有执行权限");
+            I18n.s ("这个 AppImage 没有执行权限"));
         dlg.format_secondary_text (
             "%s\n\n".printf (AppPath.shorten (e.path))
-            + "桌面启动器点开后无法运行。请选择：\n"
-            + "· 「加上执行位并继续」会运行 chmod +x，改动文件权限；\n"
-            + "· 「仍然创建（不加执行位）」不改文件，但启动器可能无法启动；\n"
-            + "· 「跳过这一项」不创建它的启动器。");
+            + I18n.s ("桌面启动器点开后无法运行。请选择：\n")
+            + I18n.s ("· 「加上执行位并继续」会运行 chmod +x，改动文件权限；\n")
+            + I18n.s ("· 「仍然创建（不加执行位）」不改文件，但启动器可能无法启动；\n")
+            + I18n.s ("· 「跳过这一项」不创建它的启动器。"));
 
-        var never = new Gtk.CheckButton.with_label ("本批次中不再询问");
+        var never = new Gtk.CheckButton.with_label (I18n.s ("本批次中不再询问"));
         dlg.get_content_area ().add (never);
         dlg.get_content_area ().show_all ();
 
-        dlg.add_button ("跳过这一项", Gtk.ResponseType.REJECT);
-        dlg.add_button ("仍然创建（不加执行位）", Gtk.ResponseType.CLOSE);
-        dlg.add_button ("加上执行位并继续", Gtk.ResponseType.OK);
+        dlg.add_button (I18n.s ("跳过这一项"), Gtk.ResponseType.REJECT);
+        dlg.add_button (I18n.s ("仍然创建（不加执行位）"), Gtk.ResponseType.CLOSE);
+        dlg.add_button (I18n.s ("加上执行位并继续"), Gtk.ResponseType.OK);
         // 安全默认：回车走「仍然创建（不加执行位）」，绝不默认改用户的文件
         dlg.set_default_response (Gtk.ResponseType.CLOSE);
 
@@ -1975,7 +2046,7 @@ public class MainWindow : Gtk.ApplicationWindow {
                 // 返回值必须检查：chmod 失败就不能假装创建成功
                 if (!AppPath.file_chmod_exec (e.path)
                     || !AppPath.file_is_executable (e.path)) {
-                    show_msg ("无法给「%s」加上执行位（chmod +x 失败），已跳过该条目。\n%s"
+                    show_msg (I18n.s ("无法给「%s」加上执行位（chmod +x 失败），已跳过该条目。\n%s")
                               .printf (e.get_best_name (), e.path));
                     return false;
                 }
@@ -1996,11 +2067,11 @@ public class MainWindow : Gtk.ApplicationWindow {
         var res = Repair.create_launchers (targets, config, store);
         store.rescan ();
 
-        string msg = "✓ 已创建 %d 个启动器".printf (res.created);
+        string msg = I18n.s ("✓ 已创建 %d 个启动器").printf (res.created);
         if (res.skipped > 0)
-            msg += " · 跳过 %d 个（已存在）".printf (res.skipped);
+            msg += I18n.s (" · 跳过 %d 个（已存在）").printf (res.skipped);
         if (res.failed > 0)
-            msg += " · ✗ %d 个失败".printf (res.failed);
+            msg += I18n.s (" · ✗ %d 个失败").printf (res.failed);
 
         if (res.failed > 0) {
             show_msg (msg + "\n\n" + string.joinv ("\n", res.messages));
@@ -2011,7 +2082,7 @@ public class MainWindow : Gtk.ApplicationWindow {
 
     private void do_edit (AppEntry e) {
         if (e.entry == null) {
-            show_msg ("该条目没有对应的 .desktop 文件");
+            show_msg (I18n.s ("该条目没有对应的 .desktop 文件"));
             return;
         }
         var result = Dialogs.edit_launcher (this, e, config);
@@ -2026,7 +2097,7 @@ public class MainWindow : Gtk.ApplicationWindow {
      * @param after_done 全部完成后回到主线程调用
      */
     private void do_extract_icons (AppEntry[] targets, owned GLib.SourceFunc? after_done = null) {
-        var dlg = Dialogs.progress (this, "正在提取图标");
+        var dlg = Dialogs.progress (this, I18n.s ("正在提取图标"));
 
         // 注意：targets 是「借用」的参数，而下面的线程闭包会跨过本函数的
         // 生命周期。Vala 的闭包只复制指针、不接管所有权 —— 直接捕获
@@ -2041,6 +2112,20 @@ public class MainWindow : Gtk.ApplicationWindow {
 
         int done = 0;
         int fails = 0;
+
+        // 取消令牌。以前这个流程只设 dlg.cancelled 来跳出循环，
+        // 却没把令牌交给 AppImageExtract —— 于是「取消」对**正在解包的那一项**
+        // 完全无效：一个卡住的 AppImage 要等到它的解包超时（默认 60 秒）才结束，
+        // 按钮按下去看着像死了。现在令牌一路传到 run_process（50ms 轮询、
+        // 收到就 force_exit 强杀子进程），取消是秒回的。
+        var cancel = new GLib.Cancellable ();
+        uint watch_id = GLib.Timeout.add (200, () => {
+            if (dlg.cancelled) {
+                cancel.cancel ();
+                return false;
+            }
+            return true;
+        });
 
         GLib.Thread<void*> t = new GLib.Thread<void*> ("extract", () => {
             foreach (var e in queue) {
@@ -2058,7 +2143,8 @@ public class MainWindow : Gtk.ApplicationWindow {
                     "%s-%u".printf (e.get_slug (),
                                     (uint)(GLib.get_real_time () % 100000)));
 
-                var info = AppImageExtract.run (e.path, work);
+                var info = AppImageExtract.run (e.path, work, cancel,
+                                                config.extract_timeout ());
                 bool ok = false;
 
                 if (info.ok) {
@@ -2075,25 +2161,38 @@ public class MainWindow : Gtk.ApplicationWindow {
                     done++;
                     string nm = e.basename;
                     GLib.Idle.add (() => { dlg.log_done (nm); return false; });
+                } else if (cancel.is_cancelled ()) {
+                    // 是用户自己中止的，不是这一项提取失败 ——
+                    // 记成失败会让用户看到一条莫名其妙的红色日志。
+                    break;
                 } else {
                     fails++;
                     string nm = e.basename;
-                    string err = info.error != "" ? info.error : "未找到可用图标";
+                    string err = info.error != "" ? info.error : I18n.s ("未找到可用图标");
                     GLib.Idle.add (() => { dlg.log_fail (nm, err); return false; });
                 }
             }
 
             GLib.Idle.add (() => {
+                GLib.Source.remove (watch_id);
+                bool was_cancelled = dlg.cancelled || cancel.is_cancelled ();
                 dlg.finish ();
+
                 DesktopFiles.refresh_icon_cache (config.should_update_icon_cache ());
                 store.rescan ();
                 if (after_done != null) {
                     after_done ();
                 } else {
-                    if (fails == 0)
-                        show_info ("✓ 已提取 %d 个图标".printf (done));
-                    else
-                        show_msg ("图标提取完成：成功 %d，失败 %d".printf (done, fails));
+                    if (was_cancelled) {
+                        if (done > 0)
+                            show_msg (I18n.s ("已中止：完成 %d 个，剩余 %d 个未处理")
+                                      .printf (done, total - done));
+                        // 一样都没成功就不打扰用户了
+                    } else if (fails == 0) {
+                        show_info (I18n.s ("✓ 已提取 %d 个图标").printf (done));
+                    } else {
+                        show_msg (I18n.s ("图标提取完成：成功 %d，失败 %d").printf (done, fails));
+                    }
                 }
                 return false;
             });
@@ -2112,7 +2211,7 @@ public class MainWindow : Gtk.ApplicationWindow {
      * 复用修复流程那一套：先备份、再原子写、最后记事务，所以随时能还原。
      */
     private void do_extract_metadata (AppEntry[] targets) {
-        var dlg = Dialogs.progress (this, "正在提取内置元数据");
+        var dlg = Dialogs.progress (this, I18n.s ("正在提取内置元数据"));
 
         int total = targets.length;
         dlg.set_progress (0, total, "");
@@ -2184,7 +2283,7 @@ public class MainWindow : Gtk.ApplicationWindow {
 
                 if (!ok) {
                     fails++;
-                    string msg = err != "" ? err : "未能读取到内置元数据";
+                    string msg = err != "" ? err : I18n.s ("未能读取到内置元数据");
                     GLib.Idle.add (() => { dlg.log_fail (nm, msg); return false; });
                     continue;
                 }
@@ -2192,8 +2291,8 @@ public class MainWindow : Gtk.ApplicationWindow {
                 if (!have_meta && icon == null) {
                     unchanged++;
                     GLib.Idle.add (() => {
-                        dlg.log_fail (nm, "这个 AppImage 里没有内置 .desktop，"
-                                          + "也没有可提取的图标 —— 没有可用信息");
+                        dlg.log_fail (nm, I18n.s ("这个 AppImage 里没有内置 .desktop，")
+                                          + I18n.s ("也没有可提取的图标 —— 没有可用信息"));
                         return false;
                     });
                     continue;
@@ -2203,7 +2302,7 @@ public class MainWindow : Gtk.ApplicationWindow {
                 if (desktop == null || !AppPath.exists (desktop)) {
                     fails++;
                     GLib.Idle.add (() => {
-                        dlg.log_fail (nm, "找不到对应的 .desktop 文件");
+                        dlg.log_fail (nm, I18n.s ("找不到对应的 .desktop 文件"));
                         return false;
                     });
                     continue;
@@ -2220,7 +2319,7 @@ public class MainWindow : Gtk.ApplicationWindow {
                 if (patched == original) {
                     unchanged++;
                     GLib.Idle.add (() => {
-                        dlg.log_done (nm + " —— 内置信息与现有内容一致，未改动");
+                        dlg.log_done (nm + I18n.s (" —— 内置信息与现有内容一致，未改动"));
                         return false;
                     });
                     continue;
@@ -2231,7 +2330,7 @@ public class MainWindow : Gtk.ApplicationWindow {
                 if (verr != "") {
                     fails++;
                     GLib.Idle.add (() => {
-                        dlg.log_fail (nm, "改完通不过 desktop-file-validate，已放弃");
+                        dlg.log_fail (nm, I18n.s ("改完通不过 desktop-file-validate，已放弃"));
                         return false;
                     });
                     continue;
@@ -2253,7 +2352,7 @@ public class MainWindow : Gtk.ApplicationWindow {
                     fails++;
                     string wmsg = werr;
                     GLib.Idle.add (() => {
-                        dlg.log_fail (nm, "写入失败：" + wmsg);
+                        dlg.log_fail (nm, I18n.s ("写入失败：") + wmsg);
                         return false;
                     });
                     continue;
@@ -2282,9 +2381,9 @@ public class MainWindow : Gtk.ApplicationWindow {
                 store.rescan ();
 
                 if (fails == 0 && unchanged == 0)
-                    show_info ("✓ 已用 AppImage 内置信息补全 %d 个启动器".printf (done));
+                    show_info (I18n.s ("✓ 已用 AppImage 内置信息补全 %d 个启动器").printf (done));
                 else
-                    show_msg ("补全完成：更新 %d 个，无需改动 %d 个，失败 %d 个"
+                    show_msg (I18n.s ("补全完成：更新 %d 个，无需改动 %d 个，失败 %d 个")
                               .printf (done, unchanged, fails));
                 return false;
             });
@@ -2297,7 +2396,7 @@ public class MainWindow : Gtk.ApplicationWindow {
 
         var dlg = new Gtk.MessageDialog (this, Gtk.DialogFlags.MODAL,
             res.success ? Gtk.MessageType.INFO : Gtk.MessageType.ERROR,
-            Gtk.ButtonsType.NONE, "测试启动 — %s".printf (e.get_best_name ()));
+            Gtk.ButtonsType.NONE, I18n.s ("测试启动 — %s").printf (e.get_best_name ()));
 
         string body = res.success
             ? "✓ %s".printf (res.message)
@@ -2305,10 +2404,10 @@ public class MainWindow : Gtk.ApplicationWindow {
 
         string err = (res.stderr ?? "").strip ();
         if (err != "")
-            body += "\n\n输出：\n" + truncate (err, 800);
+            body += I18n.s ("\n\n输出：\n") + truncate (err, 800);
 
         dlg.format_secondary_text (body);
-        dlg.add_button ("关闭", Gtk.ResponseType.CLOSE);
+        dlg.add_button (I18n.s ("关闭"), Gtk.ResponseType.CLOSE);
         dlg.run ();
         dlg.destroy ();
     }
@@ -2316,7 +2415,7 @@ public class MainWindow : Gtk.ApplicationWindow {
     private string truncate (string s, int max) {
         if (s.length <= max)
             return s;
-        return s.substring (0, max) + "\n…（已截断）";
+        return s.substring (0, max) + I18n.s ("\n…（已截断）");
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -2325,10 +2424,10 @@ public class MainWindow : Gtk.ApplicationWindow {
 
     private void on_add_dir () {
         var chooser = new Gtk.FileChooserDialog (
-            "选择要扫描的目录", this,
+            I18n.s ("选择要扫描的目录"), this,
             Gtk.FileChooserAction.SELECT_FOLDER,
-            "取消", Gtk.ResponseType.CANCEL,
-            "添加", Gtk.ResponseType.ACCEPT);
+            I18n.s ("取消"), Gtk.ResponseType.CANCEL,
+            I18n.s ("添加"), Gtk.ResponseType.ACCEPT);
         chooser.set_modal (true);
         if (chooser.run () == Gtk.ResponseType.ACCEPT) {
             string dir = chooser.get_filename ();
@@ -2345,10 +2444,10 @@ public class MainWindow : Gtk.ApplicationWindow {
     private void on_remove_dir (string dir) {
         var dlg = new Gtk.MessageDialog (this, Gtk.DialogFlags.MODAL,
             Gtk.MessageType.QUESTION, Gtk.ButtonsType.NONE,
-            "移除扫描目录？");
-        dlg.format_secondary_text ("%s\n\n仅从扫描列表移除，不会删除目录或其中的文件。".printf (dir));
-        dlg.add_button ("取消", Gtk.ResponseType.CANCEL);
-        dlg.add_button ("移除", Gtk.ResponseType.OK);
+            I18n.s ("移除扫描目录？"));
+        dlg.format_secondary_text (I18n.s ("%s\n\n仅从扫描列表移除，不会删除目录或其中的文件。").printf (dir));
+        dlg.add_button (I18n.s ("取消"), Gtk.ResponseType.CANCEL);
+        dlg.add_button (I18n.s ("移除"), Gtk.ResponseType.OK);
         dlg.set_default_response (Gtk.ResponseType.CANCEL);
         int r = dlg.run ();
         dlg.destroy ();
@@ -2367,8 +2466,8 @@ public class MainWindow : Gtk.ApplicationWindow {
 
     private void on_menu_dirs () {
         // 复用第一次运行向导的目录选择页：这里用简单对话框
-        var dlg = new Gtk.Dialog.with_buttons ("扫描目录", this,
-            Gtk.DialogFlags.MODAL, "关闭", Gtk.ResponseType.CLOSE);
+        var dlg = new Gtk.Dialog.with_buttons (I18n.s ("扫描目录"), this,
+            Gtk.DialogFlags.MODAL, I18n.s ("关闭"), Gtk.ResponseType.CLOSE);
         dlg.set_default_size (560, 340);
         dlg.set_border_width (12);
 
@@ -2386,7 +2485,7 @@ public class MainWindow : Gtk.ApplicationWindow {
             lab.set_xalign (0.0f);
             lab.set_ellipsize (Pango.EllipsizeMode.MIDDLE);
             row.pack_start (lab, true, true, 0);
-            var hint = new Gtk.Label (ok ? "" : "不存在");
+            var hint = new Gtk.Label (ok ? "" : I18n.s ("不存在"));
             hint.get_style_context ().add_class ("dim-label");
             row.pack_start (hint, false, false, 0);
             list.pack_start (row, false, false, 0);
@@ -2417,7 +2516,7 @@ public class MainWindow : Gtk.ApplicationWindow {
     private void on_menu_cleanup () {
         if (Dialogs.cleanup (this, store) > 0) {
             store.rescan ();
-            show_info ("✓ 清理完成");
+            show_info (I18n.s ("✓ 清理完成"));
         }
     }
 
@@ -2439,11 +2538,11 @@ public class MainWindow : Gtk.ApplicationWindow {
         }
         update_selection_ui ();
         if (n == 0) {
-            show_info ("✓ 没有发现可优化或损坏的启动器");
+            show_info (I18n.s ("✓ 没有发现可优化或损坏的启动器"));
         } else {
-            show_msg ("发现 %d 个可优化或损坏的启动器，已自动勾选。\n"
+            show_msg (I18n.s ("发现 %d 个可优化或损坏的启动器，已自动勾选。\n")
                       .printf (n)
-                      + "点右上角的「🔧 修复」逐个处理，或右键单条选择「修复问题…」。");
+                      + I18n.s ("点操作条上的「修复」逐个处理，或右键单条选择「修复问题…」。"));
         }
     }
 
@@ -2453,9 +2552,12 @@ public class MainWindow : Gtk.ApplicationWindow {
         dlg.set_modal (true);
         dlg.set_program_name ("AppImage Manager");
         dlg.set_version (APPMGR_VERSION);
-        dlg.set_comments ("扫描 AppImage、管理目录并创建与修复桌面启动器");
-        dlg.set_license_type (Gtk.License.MIT_X11);
+        dlg.set_comments (I18n.s ("扫描 AppImage、管理目录并创建与修复桌面启动器"));
+        // GPL-3.0，与仓库里的 LICENSE 一致。原来写的 MIT_X11 是错的 ——
+        // 源码都按 GPL-3.0 发布了，关于对话框却告诉别人 MIT。
+        dlg.set_license_type (Gtk.License.GPL_3_0);
         dlg.set_logo_icon_name ("appimage-manager");
+        dlg.set_copyright (I18n.s ("GPL-3.0 许可"));
         dlg.set_website ("https://github.com/");
         dlg.run ();
         dlg.destroy ();
@@ -2507,16 +2609,16 @@ public class MainWindow : Gtk.ApplicationWindow {
         var tx = pending[0];
         var dlg = new Gtk.MessageDialog (this, Gtk.DialogFlags.MODAL,
             Gtk.MessageType.WARNING, Gtk.ButtonsType.NONE,
-            "检测到未完成的修复事务");
+            I18n.s ("检测到未完成的修复事务"));
         dlg.format_secondary_text (
-            "上次运行意外中断（%s）\n\n"
+            I18n.s ("上次运行意外中断（%s）\n\n")
             .printf (tx.started_at)
-            + "事务 %s · 共 %d 个文件 · 已完成 %d 个\n\n"
+            + I18n.s ("事务 %s · 共 %d 个文件 · 已完成 %d 个\n\n")
               .printf (tx.txid, tx.total (), tx.done ())
-            + "磁盘上的文件不会处于半写状态（每步都是原子重命名），\n"
-            + "最坏情况只是「部分已修、部分未修」。" );
-        dlg.add_button ("保留现状并归档", Gtk.ResponseType.CLOSE);
-        dlg.add_button ("全部回滚", Gtk.ResponseType.REJECT);
+            + I18n.s ("磁盘上的文件不会处于半写状态（每步都是原子重命名），\n")
+            + I18n.s ("最坏情况只是「部分已修、部分未修」。") );
+        dlg.add_button (I18n.s ("保留现状并归档"), Gtk.ResponseType.CLOSE);
+        dlg.add_button (I18n.s ("全部回滚"), Gtk.ResponseType.REJECT);
         dlg.set_default_response (Gtk.ResponseType.CLOSE);
         int r = dlg.run ();
         dlg.destroy ();
@@ -2525,10 +2627,10 @@ public class MainWindow : Gtk.ApplicationWindow {
             var rr = Backup.restore (tx, Backup.ConflictPolicy.STASH);
             tx.mark_rolled_back ();
             store.rescan ();
-            show_info ("✓ 已回滚 %d 个文件".printf (rr.restored));
+            show_info (I18n.s ("✓ 已回滚 %d 个文件").printf (rr.restored));
         } else {
             Journal.archive_interrupted (tx);
-            show_info ("已归档中断的事务 %s".printf (tx.txid));
+            show_info (I18n.s ("已归档中断的事务 %s").printf (tx.txid));
         }
     }
 
@@ -2589,6 +2691,88 @@ public class MainWindow : Gtk.ApplicationWindow {
 
     public void menu_about () { on_menu_about (); }
 
+    /**
+     * 切换界面语言。
+     *
+     * 存进配置后弹提示条 +「立即重启」按钮，不做无声自动重启 ——
+     * 用户可能正在勾选条目或填对话框，被直接重开会丢操作。
+     */
+    public void menu_set_language (I18n.Lang lang) {
+        if (!language_menu_armed)
+            return;      // GTK 自动激活，不是用户的选择
+        if (lang == config.language ())
+            return;
+
+        config.set_language (lang);
+        config.save ();
+
+        present_language_restart (lang);
+    }
+
+    /**
+     * 「语言已切换，重启后生效」的提示条，带一键重启按钮。
+     *
+     * 提示条本身还是旧语言 —— 这是必然的，控件文字在构造时就定死了。
+     * 所以这里刻意把「立即重启」这个按钮做成图标 + 中文短标签，
+     * 两种语言下用户都认得；重启后第一眼看到的就是新语言的界面。
+     */
+    private void present_language_restart (I18n.Lang lang) {
+        infobar.set_message_type (Gtk.MessageType.INFO);
+        infobar_label.set_text (
+            I18n.s ("界面语言已切换为 %s，重启后生效").printf (lang.display_name ()));
+
+        infobar_action.set_label (I18n.s ("立即重启"));
+        infobar_action.set_image (
+            new Gtk.Image.from_icon_name ("view-refresh-symbolic", Gtk.IconSize.BUTTON));
+        infobar_action.set_always_show_image (true);
+        infobar_action.set_tooltip_text (I18n.s ("立即重启应用"));
+
+        // 不设自动隐藏：重启提示得留在那儿，用户可能隔一会儿才点
+        present_infobar_with (InfobarAction.RESTART);
+    }
+
+    /**
+     * 同进程换映像重启。
+     *
+     * 关键是用 execv 而不是「再起一个进程然后退出这个」——
+     * GApplication 是单实例的，后起的那个会被已经占着 D-Bus 名字的老实例
+     * 唤醒然后自己退出，用户看到的是「点了没反应」。execv 换了映像还是同一个
+     * pid，D-Bus 连接随进程一起重建，中间没有名字空窗。
+     */
+    private void restart_now () {
+        string self = AppPath.self_exe ();
+        if (self == null || !GLib.FileUtils.test (self, GLib.FileTest.IS_EXECUTABLE)) {
+            show_msg (I18n.s ("找不到本程序的执行文件，无法自动重启。请手动重开。"));
+            return;
+        }
+
+        // 用 main() 记下的原始 argv，而不是现取 —— 带上 .desktop 传进来的
+        // 文件路径等参数，否则重启后用户打开的文件就丢了。
+        string[] argv = { self };
+        foreach (var a in AppMgr.argv_snapshot ())
+            if (a != "" && a != self)
+                argv += a;
+
+        // 退出前把待写的东西落盘，避免重启后读到半份配置
+        config.save ();
+
+        try {
+            GLib.Process.spawn_async (GLib.Environment.get_home_dir (), argv, null,
+                                       GLib.SpawnFlags.SEARCH_PATH |
+                                       GLib.SpawnFlags.DO_NOT_REAP_CHILD,
+                                       null, null);
+        } catch (GLib.Error e) {
+            show_msg (I18n.s ("重启失败：%s").printf (e.message));
+            return;
+        }
+
+        // 给新进程一点时间抢到 D-Bus 名字，再放老进程走
+        GLib.Timeout.add (250, () => {
+            destroy ();          // 关掉主窗口 = 结束这个 Gtk.Application
+            return false;
+        });
+    }
+
     public void menu_extract_metadata () {
         // 这个入口原来只弹一句「已移到创建对话框里」—— 点了等于没点，还会
         // 把用户指去一条走不通的路。现在它真的干活：解包 AppImage，读出
@@ -2600,11 +2784,11 @@ public class MainWindow : Gtk.ApplicationWindow {
                 targets.add (e);
 
         if (targets.length == 0) {
-            show_msg ("这个功能要用 AppImage 内置的信息去补全「已有的启动器」，"
-                      + "所以得先挑出至少一个已创建或外部创建的条目。\n\n"
-                      + "· 条目状态是「新发现」→ 请改用「创建」，"
-                      + "创建对话框里也有同一个提取按钮。\n"
-                      + "· 还没选中任何条目 → 先勾选或点选一行。");
+            show_msg (I18n.s ("这个功能要用 AppImage 内置的信息去补全「已有的启动器」，")
+                      + I18n.s ("所以得先挑出至少一个已创建或外部创建的条目。\n\n")
+                      + I18n.s ("· 条目状态是「新发现」→ 请改用「创建」，")
+                      + I18n.s ("创建对话框里也有同一个提取按钮。\n")
+                      + I18n.s ("· 还没选中任何条目 → 先勾选或点选一行。"));
             return;
         }
 
@@ -2613,22 +2797,22 @@ public class MainWindow : Gtk.ApplicationWindow {
 
     public void menu_shortcuts () {
         var dlg = new Gtk.MessageDialog (this, Gtk.DialogFlags.MODAL,
-            Gtk.MessageType.INFO, Gtk.ButtonsType.CLOSE, "键盘快捷键");
+            Gtk.MessageType.INFO, Gtk.ButtonsType.CLOSE, I18n.s ("键盘快捷键"));
         dlg.format_secondary_text (
-            "Ctrl+R / F5   重新扫描\n"
-            + "Ctrl+A        全选\n"
-            + "Ctrl+F        聚焦搜索框\n"
-            + "Ctrl+N        创建启动器\n"
-            + "Ctrl+D        添加扫描目录\n"
-            + "Ctrl+,        设置\n"
-            + "Ctrl+Q        退出\n"
-            + "F11           最大化 / 还原\n"
-            + "Delete        删除选中的启动器\n"
-            + "Enter         创建 / 认领 / 编辑（按当前状态）\n"
-            + "Esc           关闭提示条\n"
-            + "双击条目      未创建 → 创建；已创建 → 编辑\n"
-            + "双击标题栏    最大化 / 还原\n"
-            + "右键条目      打开完整操作菜单");
+            I18n.s ("Ctrl+R / F5   重新扫描\n")
+            + I18n.s ("Ctrl+A        全选\n")
+            + I18n.s ("Ctrl+F        聚焦搜索框\n")
+            + I18n.s ("Ctrl+N        创建启动器\n")
+            + I18n.s ("Ctrl+D        添加扫描目录\n")
+            + I18n.s ("Ctrl+,        设置\n")
+            + I18n.s ("Ctrl+Q        退出\n")
+            + I18n.s ("F11           最大化 / 还原\n")
+            + I18n.s ("Delete        删除选中的启动器\n")
+            + I18n.s ("Enter         创建 / 认领 / 编辑（按当前状态）\n")
+            + I18n.s ("Esc           关闭提示条\n")
+            + I18n.s ("双击条目      未创建 → 创建；已创建 → 编辑\n")
+            + I18n.s ("双击标题栏    最大化 / 还原\n")
+            + I18n.s ("右键条目      打开完整操作菜单"));
         dlg.run ();
         dlg.destroy ();
     }

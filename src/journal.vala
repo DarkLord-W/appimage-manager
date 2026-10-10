@@ -379,10 +379,10 @@ namespace Journal {
             DesktopFiles.sync_dir (GLib.Path.get_dirname (path));
             if (GLib.FileUtils.rename (tmp, path) != 0) {
                 unlink (tmp);
-                warning ("journal 重命名失败: %s → %s", tmp, path);
+                warning (I18n.s ("journal 重命名失败: %s → %s"), tmp, path);
             }
         } catch (GLib.Error e) {
-            warning ("journal 写入失败: %s", e.message);
+            warning (I18n.s ("journal 写入失败: %s"), e.message);
             unlink (tmp);
         }
     }

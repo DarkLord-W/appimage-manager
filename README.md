@@ -1,5 +1,7 @@
 # AppImage Manager
 
+> **语言 / Language**：[简体中文](README.md) · [English](README.en.md)
+
 一个用 **Vala + GTK3** 写的 AppImage 桌面集成管理器。扫描你指定的目录，把 AppImage 变成规范的 `.desktop` 启动器，并持续维护它们的健康状态。
 
 编译产物是**单个原生二进制**，拷到任何装了 GTK3 的 Linux 上都能直接跑。
@@ -18,6 +20,58 @@
 
 原生二进制与 AppImage 都**依赖系统的 GTK3**（桌面发行版基本都有）。用
 deb / rpm / arch 包时依赖会被自动声明并装好。
+
+---
+
+## 界面
+
+### 主界面
+
+![主界面](docs/screenshots/main-window.png)
+
+11 个 AppImage，四种状态一目了然：黄色`新发现`（还没启动器）、橙色`可优化`
+（启动器有问题，带问题数）、蓝色`外部`（别人建的，本工具不管）、
+绿色`已创建`（本工具管理中）。
+
+### 创建启动器
+
+![创建启动器对话框](docs/screenshots/create-dialog.png)
+
+填完上面几项，下面实时预览**将要写入的 `.desktop` 全文** —— 写之前你就知道
+会得到什么。
+
+### 修复问题
+
+![修复对话框](docs/screenshots/repair-dialog.png)
+
+逐条列出问题、命中了哪条规则、建议怎么改；选保守模式只改必改项，
+选完整模式连冗余键一起清。
+
+### 右键菜单
+
+![右键菜单](docs/screenshots/context-menu.png)
+
+对单条的操作在这里，和常驻操作条（批量）零重叠。
+
+### 英文界面
+
+界面文案**全部可翻译**，没有半中半英的混合状态。菜单 `语言` 切换，
+首次启动跟随系统 locale。
+
+| 简体中文 | English |
+|---|---|
+| ![中文界面](docs/screenshots/main-window.png) | ![English UI](docs/screenshots/main-window.en.png) |
+
+<details>
+<summary>其余对话框的英文版</summary>
+
+| | 中文 | English |
+|---|---|---|
+| 创建 | ![](docs/screenshots/create-dialog.png) | ![](docs/screenshots/create-dialog.en.png) |
+| 修复 | ![](docs/screenshots/repair-dialog.png) | ![](docs/screenshots/repair-dialog.en.png) |
+| 右键菜单 | ![](docs/screenshots/context-menu.png) | ![](docs/screenshots/context-menu.en.png) |
+
+</details>
 
 ---
 
@@ -52,6 +106,21 @@ deb / rpm / arch 包时依赖会被自动声明并装好。
 
 每个问题都显示「当前值 / 修复值」，改动前有 unified diff 预览。
 
+### 中英双语界面
+
+- 菜单 `语言(L)` 三选一：跟随系统 / 简体中文 / English
+- 首次启动**默认跟随系统 locale**（`LANG`/`LC_MESSAGES` 非 `zh*` 即英文），
+  海外用户装上就是英文，不用先去菜单里翻一遍
+- 切换后弹提示条 +「立即重启」按钮，一次点击生效 —— 用同进程换映像
+  （`execv`）的方式重启，GApplication 的单实例名全程不断，
+  不会出现「点了没反应」或同时跑起两个
+- 570 条文案内置在 `src/i18n.vala` 的对照表里，**编译进二进制**，
+  不依赖 gettext / .po，CI 和三个发行版包都不用多装东西
+- 漏翻的串**退回中文而不是显示空白** —— 界面上永远不会出现空格子
+- 自测里有两道闸门：译文占位符必须与中文一一对应（防 `printf` 越界），
+  且源码里每条中文串要么已包 `I18n.s()`、要么在显式豁免名单里
+  （新加了中文界面文案却忘了翻，自测立刻红）
+
 ### 反向管理
 - 删除启动器（删除前自动备份）
 - 编辑 `Name` / `Comment` / `Categories` / `Exec` / `Icon`
@@ -85,11 +154,11 @@ deb / rpm / arch 包时依赖会被自动声明并装好。
 
 ---
 
-## 界面
+## 界面布局
 
 ```
 ┌ 原生标题栏（由窗口管理器绘制）──────────────────────────────────────┐
-├ 文件(F)  编辑(E)  视图(V)  工具(T)  帮助(H) ────────────────────────┤
+├ 文件(F)  编辑(E)  视图(V)  工具(T)  语言(L)  帮助(H) ──────────────────┤
 ├ [⟳ 重新扫描]  [🔍 搜索…]              3 个目录 · 12 个 AppImage … ──┤
 ├ 📁 ~/Applications ✕   📁 /opt/apps ✕            [+ 添加目录] ───────┤
 ├ [全部▾] ☐全选  已勾选 3 项 │ ⚡创建 🔧修复 🔗认领 🖼图标 🗑删除 ───────┤
@@ -169,7 +238,9 @@ deb / rpm / arch 包时依赖会被自动声明并装好。
 | `Ctrl+D` | 添加扫描目录 | | `Ctrl+Q` | 退出 |
 | `Ctrl+,` | 设置 | | 双击条目 | 未创建→创建；已创建→编辑 |
 
-窗口最小 **620 × 400**，窄窗口下操作条自动变横向滚动。
+窗口最小 **620 × 560**，窄窗口下操作条自动变横向滚动。窗口宽度不足
+880 px 时，右下角的浮动操作条会自动收起 —— 它本来就会盖住列表最后几行，
+窗口一小就等于让那几行没法点。
 
 没有「全屏」—— 只有「最大化」。真全屏在 X11 下由窗口管理器负责撤掉
 全部装饰，标题栏和最小化/最大化/关闭三个按钮会一起消失，用起来像是
@@ -203,8 +274,8 @@ sudo apt install desktop-file-utils xvfb xfwm4 xdotool imagemagick xclip
 ```
 
 ```bash
-make selftest        # 240 项引擎自测，不依赖图形环境
-tests/ui-test.sh     # 20 步界面自动化，需要上面那套工具
+make selftest        # 253 项引擎自测，不依赖图形环境
+tests/ui-test.sh     # 20 步界面自动化 + 全按钮点击稳定性检查，需要上面那套工具
 ```
 
 CI 上也是跑这两条 —— 缺工具时 `ui-test.sh` 会跳过并退 0，所以本地
@@ -321,7 +392,8 @@ src/
 ├── journal.vala        WAL 两阶段事务、崩溃恢复
 ├── backup.vala         备份存储、追加式历史、还原
 ├── version.vala        版本号
-└── paths.vala          XDG 路径解析、文件操作兼容层
+├── i18n.vala           中英文对照表与 I18n.s()（编译进二进制，不依赖 gettext）
+├── paths.vala          XDG 路径解析、文件操作兼容层
 data/
 ├── style.css           GTK3 样式表（主题自适应）
 ├── appimage-manager.png            应用图标
@@ -332,6 +404,7 @@ scripts/
 tests/
 ├── selftest.vala       引擎自测（不依赖 GUI）
 ├── ui-test.sh          Xvfb + xdotool 的界面自动化测试
+├── ui-helpers.sh       ui-test.sh 复用的断言与截图辅助
 └── make-fixtures.sh    生成测试用假 AppImage 与 21 个畸形 .desktop
 ```
 

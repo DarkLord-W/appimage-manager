@@ -75,7 +75,7 @@ namespace Scanner {
 
         foreach (string dir in dirs) {
             if (!AppPath.is_dir (dir)) {
-                errors.add ("%s —— 目录不存在".printf (AppPath.shorten (dir)));
+                errors.add (I18n.s ("%s —— 目录不存在").printf (AppPath.shorten (dir)));
                 continue;
             }
             res.scanned_dirs++;
@@ -124,7 +124,7 @@ namespace Scanner {
         try {
             dir_enum = GLib.Dir.open (dir, 0);
         } catch (GLib.Error e) {
-            errors.add ("%s —— 无法读取（%s）".printf (AppPath.shorten (dir), e.message));
+            errors.add (I18n.s ("%s —— 无法读取（%s）").printf (AppPath.shorten (dir), e.message));
             return;
         }
 

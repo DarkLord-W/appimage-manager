@@ -377,7 +377,7 @@ namespace DesktopFiles {
         // 手动删掉了。写之前自己确保父目录存在，不要依赖调用方的顺序。
         string parent = GLib.Path.get_dirname (path);
         if (!AppPath.ensure_dir (parent)) {
-            error = "无法创建目录: %s".printf (AppPath.shorten (parent));
+            error = I18n.s ("无法创建目录: %s").printf (AppPath.shorten (parent));
             return;
         }
 
@@ -386,13 +386,13 @@ namespace DesktopFiles {
             // 先落临时文件，再 rename —— 同分区上 rename 是原子操作
             GLib.FileUtils.set_contents (tmp, content);
         } catch (GLib.Error e) {
-            error = "写入临时文件失败: %s".printf (e.message);
+            error = I18n.s ("写入临时文件失败: %s").printf (e.message);
             return;
         }
 
         if (GLib.FileUtils.rename (tmp, path) != 0) {
             AppPath.file_remove (tmp);
-            error = "重命名失败: %s → %s".printf (AppPath.shorten (tmp), AppPath.shorten (path));
+            error = I18n.s ("重命名失败: %s → %s").printf (AppPath.shorten (tmp), AppPath.shorten (path));
             return;
         }
         sync_dir (parent);
@@ -453,7 +453,7 @@ namespace DesktopFiles {
         try {
             GLib.File.new_for_path (path).delete (null);
         } catch (GLib.Error e) {
-            error = "删除失败: %s (%s)".printf (AppPath.shorten (path), e.message);
+            error = I18n.s ("删除失败: %s (%s)").printf (AppPath.shorten (path), e.message);
             return false;
         }
         sync_dir (GLib.Path.get_dirname (path));

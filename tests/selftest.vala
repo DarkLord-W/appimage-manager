@@ -1734,6 +1734,100 @@ public int main (string[] args) {
             GLib.FileUtils.remove (p);
     }
 
+    /* ══ 中英文界面 ═══════════════════════════════════════════════ */
+
+    stdout.printf ("\n── N. 中英文界面 ─────────────────────────\n");
+
+    // 中文模式必须恒等：整个自测里几百条断言直接比对中文字面量，
+    // 只要 I18n.s 在中文下是恒等映射，它们一条都不用改。这条钉住它。
+    var saved_lang = I18n.current;
+    I18n.current = I18n.Lang.ZH;
+    check (ref checks, ref failures, "中文模式恒等（不翻译）",
+           I18n.s ("重新扫描") == "重新扫描", I18n.s ("重新扫描"));
+    check (ref checks, ref failures, "中文模式对未收录串也恒等",
+           I18n.s ("这句根本没进表") == "这句根本没进表", "");
+    I18n.current = I18n.Lang.EN;
+
+    check (ref checks, ref failures, "英文模式能查到译文",
+           I18n.s ("重新扫描") == "Rescan",
+           "实得「%s」".printf (I18n.s ("重新扫描")));
+
+    // 漏翻必须退回中文，绝不能返回空串 —— 界面上出现空白比中英混杂更糟
+    check (ref checks, ref failures, "漏翻退回中文而不是空串",
+           I18n.s ("绝对没进表的测试串 XYZ") == "绝对没进表的测试串 XYZ", "");
+
+    // 表本身的结构体检
+    var tbl = I18n.all_entries ();
+    check (ref checks, ref failures, "翻译表条数为偶数（成对存放）",
+           tbl.length % 2 == 0, "%d 条".printf (tbl.length));
+    check (ref checks, ref failures, "翻译表非空",
+           tbl.length > 0, "%d 条".printf (tbl.length / 2));
+
+    int no_zh = 0;
+    int no_en = 0;
+    int dup = 0;
+    int placeholder_bad = 0;
+    int dup_key = 0;
+    var seen_keys = new GenericArray<string> ();
+    for (uint i = 0; i + 1 < tbl.length; i += 2) {
+        unowned string zh = tbl[i];
+        unowned string en = tbl[i + 1];
+
+        // 数的是「译文里还有汉字」和「译文是空的」这两种坏情况
+        if (has_cjk (en))
+            no_zh++;
+        if (en.strip () == "")
+            no_en++;
+
+        if (has_str (seen_keys, zh)) {
+            dup_key++;
+        } else {
+            seen_keys.add (zh);
+        }
+
+        // 占位符必须一一对应：个数不同 printf 会读越界，类型不同会打印乱码
+        if (!same_placeholders (zh, en))
+            placeholder_bad++;
+
+        // 中文里不该出现 %n（格式串漏洞），译文里更不该
+        if (en.contains ("%n"))
+            dup++;
+    }
+
+    check (ref checks, ref failures, "译文全部不含中文", no_zh == 0,
+           "%d 条译文里还有中文".printf (no_zh));
+    check (ref checks, ref failures, "译文全部非空", no_en == 0,
+           "%d 条译文是空的".printf (no_en));
+    check (ref checks, ref failures, "翻译表没有重复的中文键", dup_key == 0,
+           "%d 个键重复了".printf (dup_key));
+    check (ref checks, ref failures, "译文不含 %n 格式串漏洞", dup == 0,
+           "%d 条含 %%n".printf (dup));
+    check (ref checks, ref failures, "译文占位符与中文一一对应",
+           placeholder_bad == 0,
+           "%d 条对不上".printf (placeholder_bad));
+
+    // 覆盖率：源码里每个 I18n.s("中文") 都得在表里
+    var missing = i18n_missing_keys ();
+    check (ref checks, ref failures, "源码里每条 I18n.s 都有译文",
+           missing.length == 0,
+           missing.length == 0 ? "" : "漏 %d 条，例如「%s」"
+                                 .printf (missing.length, missing[0]));
+
+    // 兜底闸门：源码里每一条中文串，要么已包 I18n.s()，要么在豁免清单里。
+    // 少了任何一边都说明有界面文案漏了翻译。
+    var unwrapped = i18n_unwrapped ();
+    check (ref checks, ref failures, "没有漏翻译的界面文案", unwrapped.length == 0,
+           unwrapped.length == 0 ? ""
+             : "%d 条漏了，例如「%s」".printf (unwrapped.length, unwrapped[0]));
+
+    // 反向：表里有、源码里没人用的孤儿条目（提示清理，不算失败）
+    var orphan = i18n_orphan_keys ();
+    if (orphan.length > 0)
+        stdout.printf ("  · 翻译表有 %d 条孤儿条目（代码里已不用）\n",
+                       orphan.length);
+
+    I18n.current = saved_lang;
+
     /* ══ 汇总 ════════════════════════════════════════════════════ */
     stdout.printf ("\n═══════════════════════════════════════════\n");
     if (failures == 0) {
@@ -1876,4 +1970,332 @@ bool has_str (GenericArray<string> a, string want) {
 unowned string get_str (GenericArray<string> a, uint i) {
     unowned string[] raw = (string[]) a.data;
     return raw[i];
+}
+
+/* ══════════════════════════════════════════════════════════════════
+ *  中英文界面的自测辅助
+ *  ══════════════════════════════════════════════════════════════════ */
+
+/**
+ * 字符串里有没有汉字。
+ *
+ * 用 \p{Han} 正则而不是手撸 UTF-8 解码：前者由 PCRE 的 Unicode 属性表
+ * 兜底，连扩展区、生僻字（CJK 扩展 A/B）都算上；后者只能覆盖基本区，
+ * 漏一个就是一个假阴性。
+ */
+/**
+ * 字符串里有没有汉字（U+4E00–U+9FFF 基本区）。
+ *
+ * 自己按 UTF-8 三字节序列解码，不用 \p{Han}：实测这套 GRegex 没启用
+ * Unicode 属性表，\p{Han} 连中间的「·」(U+00B7) 都会命中，误报一片。
+ */
+bool has_cjk (string s) {
+    for (int i = 0; i + 2 < s.length; i++) {
+        uint b0 = (uint8) s[i];
+        uint b1 = (uint8) s[i + 1];
+        uint b2 = (uint8) s[i + 2];
+        if (b0 < 0xE4 || b0 > 0xE9)
+            continue;
+        if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80)
+            continue;
+        uint cp = ((b0 & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F);
+        if (cp >= 0x4E00 && cp <= 0x9FFF)
+            return true;
+    }
+    return false;
+}
+
+/**
+ * 取出字符串里所有 printf 占位符的**转换符**。
+ *
+ * 只留转换符那一段：宽度（%10s）和长度修饰（%lld）允许译文改，但转换符
+ * 和出现次数不能变 —— 次数变了对不上参数，类型变了会按错误的长度从栈上
+ * 取值，都能崩。
+ *
+ * 用正则而不是手写扫描状态机：手写那版在多字节字符串上 substring 越界
+ * （g_strsubstr 的 offset+len 断言炸过），而且「完成度 100%」这种普通
+ * 百分号很容易被误判成占位符。
+ */
+string[] placeholders (string s) {
+    var rx = new GLib.Regex (
+        "%[-+ #0]*[0-9*]*(?:\\.[0-9*]+)?(?:hh|h|ll|l|j|z|t)?([diouxXeEfFgGaAcspn])");
+    var misses = new GenericArray<string> ();
+    GLib.MatchInfo? mi = null;
+    if (!rx.match (s, 0, out mi) || mi == null)
+        return new string[0];
+    while (mi.matches ()) {
+        int b0 = 0, b1 = 0;
+        if (mi.fetch_pos (1, out b0, out b1))
+            misses.add (mi.fetch (1).dup ());
+        try {
+            if (!mi.next ())
+                break;
+        } catch (GLib.RegexError e) {
+            break;
+        }
+    }
+    return misses.steal ();
+}
+
+/**
+ * 占位符是否一一对应。
+ *
+ * 比的是**多重集**不是顺序：译文完全可以在英文语序里把 "%s ... %d"
+ * 调成 "%d ... %s"，只要参数按同样顺序传给 printf 就完全正确。
+ * 按位置逐个比会把这种合法改写误判成不匹配。
+ */
+bool same_placeholders (string zh, string en) {
+    var a = placeholders (zh);
+    var b = placeholders (en);
+    if (a.length != b.length)
+        return false;
+
+    string kinds = "diouxXeEfFgGaAcspn";
+    for (int i = 0; i < kinds.length; i++) {
+        string key = kinds.substring (i, i + 1).dup ();
+        int ca = 0, cb = 0;
+        for (uint k = 0; k < a.length; k++) if (a[k] == key) ca++;
+        for (uint k = 0; k < b.length; k++) if (b[k] == key) cb++;
+        if (ca != cb)
+            return false;
+    }
+    return true;
+}
+
+
+/**
+ * 豁免清单：这些中文字面量是**故意不翻译**的。
+ *
+ * 两类：
+ *   1. 拿中文字面量做比较判断 —— pill.vala 用 has_prefix("失效") 决定药丸
+ *      颜色。翻成英文的话，英文界面下所有药丸会挤成同一种颜色。
+ *   2. 规则元数据的常量 —— rules.vala 的 SEV_* 是严重级别的规范名，
+ *      保持中文才能和自测里的断言对上；只在 severity_label() 出口翻译。
+ *
+ * 这份清单同时是**兜底闸门**：下面那条断言要求「源码里的中文串，要么包了
+ * I18n.s()，要么在这份清单里」。以后有人新加一条中文界面文案忘了翻译，
+ * 自测立刻红 —— 否则英文用户会看到一半中文一半英文。
+ */
+private static string[] i18n_exempt () {
+    return new string[] {
+        "严重",
+        "健康",
+        "可优化",
+        "外部",
+        "失效",
+        "已创建",
+        "损坏",
+        "提示",
+        "新发现",
+        "警告",
+    };
+}
+
+/** 真正的字符串值 → 源码里的 Vala 字面量形态（用于反查源码） */
+string escape_vala (string s) {
+    return s.replace ("\\", "\\\\").replace ("\n", "\\n")
+            .replace ("\t", "\\t").replace ("\r", "\\r");
+}
+
+/** 源码里的 Vala 字符串字面量 → 真正的字符串值 */
+string unescape_vala (string s) {
+    var b = new GLib.StringBuilder ();
+    int i = 0;
+    while (i < s.length) {
+        if (s[i] == '\\' && i + 1 < s.length) {
+            char c = s[i + 1];
+            if (c == 'n') { b.append_c ('\n'); i += 2; continue; }
+            if (c == 't') { b.append_c ('\t'); i += 2; continue; }
+            // \r 也要处理：漏了它，含 \r\n 的条目会被算成「没进表」
+            if (c == 'r') { b.append_c ('\r'); i += 2; continue; }
+            if (c == '"' || c == '\\') { b.append_c (c); i += 2; continue; }
+        }
+        b.append_c (s[i]);
+        i++;
+    }
+    return b.str;
+}
+
+/** 找到 src 目录（自测可能在项目根或 tests/ 下跑） */
+string find_src_dir () {
+    foreach (var cand in new string[] { "src", "../src" }) {
+        if (GLib.FileUtils.test (cand + "/i18n.vala", GLib.FileTest.EXISTS))
+            return cand;
+    }
+    return "";
+}
+
+/**
+ * 扫源码，找出所有 I18n.s ("中文") 里没进翻译表的那些。
+ *
+ * 这是防止「以后有人加了个新按钮忘了加英文」的唯一手段 ——
+ * 界面显示成中文虽然不崩，但英文用户会看到一半中文一半英文。
+ */
+string[] i18n_missing_keys () {
+    var misses = new GenericArray<string> ();
+    string src_dir = find_src_dir ();
+    if (src_dir == "")
+        return misses.steal ();
+
+    var rx = new GLib.Regex ("I18n\\.s\\s*\\(\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
+    var d = GLib.Dir.open (src_dir);
+    if (d == null)
+        return misses.steal ();
+
+    string? name;
+    while ((name = d.read_name ()) != null) {
+        if (!name.has_suffix (".vala") || name == "i18n.vala")
+            continue;
+        string text;
+        try {
+            GLib.FileUtils.get_contents (src_dir + "/" + name, out text);
+        } catch {
+            continue;
+        }
+        GLib.MatchInfo? mi;
+        if (!rx.match (text, 0, out mi) || mi == null)
+            continue;
+        while (mi.matches ()) {
+            int b0 = 0, b1 = 0;
+            if (mi.fetch_pos (1, out b0, out b1)) {
+                string key = unescape_vala (mi.fetch (1));
+                // 翻译的 key 必须确实是中文；纯英文（比如 "Reset"）不需要译文
+                if (key != "" && has_cjk (key) && !T_has (key) && !has_str (misses, key))
+                    misses.add (key);
+            }
+            try {
+                if (!mi.next ())
+                    break;
+            } catch (GLib.RegexError e) {
+                break;
+            }
+        }
+    }
+    return misses.steal ();
+}
+
+bool T_has (string key) {
+    var tbl = I18n.all_entries ();
+    for (uint i = 0; i + 1 < tbl.length; i += 2)
+        if (tbl[i] == key)
+            return true;
+    return false;
+}
+
+/** 翻译表里有、但源码里已经没人调用的条目 */
+string[] i18n_orphan_keys () {
+    var misses = new GenericArray<string> ();
+    var tbl = I18n.all_entries ();
+    string src_dir = find_src_dir ();
+    if (src_dir == "")
+        return misses.steal ();
+
+    string all = "";
+    var d = GLib.Dir.open (src_dir);
+    if (d == null)
+        return misses.steal ();
+    string? name;
+    while ((name = d.read_name ()) != null) {
+        if (!name.has_suffix (".vala") || name == "i18n.vala")
+            continue;
+        try {
+            string chunk;
+            GLib.FileUtils.get_contents (src_dir + "/" + name, out chunk);
+            all += chunk;
+        } catch {
+            continue;
+        }
+    }
+
+    // 匹配的是**源码里的字面量形态**（含 \n \t 等转义），不是运行时值。
+    // 拿运行时值去 index_of 源码字符串，含转义的条目会全部误判成孤儿。
+    for (uint i = 0; i + 1 < tbl.length; i += 2) {
+        string zh = tbl[i];
+        if (all.index_of ("\"" + escape_vala (zh) + "\"") < 0)
+            misses.add (zh);
+    }
+    return misses.steal ();
+}
+
+/**
+ * 扫源码找出「没包 I18n.s()、又不在豁免清单里」的中文字面量。
+ *
+ * 做法：先把 I18n.s(...) 整段挖掉，再在剩下的文本里找中文字面量 ——
+ * 比逐个判断调用点可靠，也不会漏掉多行调用里落在续行上的参数。
+ */
+string[] i18n_unwrapped () {
+    var leaked = new GenericArray<string> ();
+    string src_dir = find_src_dir ();
+    if (src_dir == "")
+        return leaked.steal ();
+
+    var exempt = i18n_exempt ();
+    string lit = "\"((?:[^\"\\\\]|\\\\.)*)\"";
+    var rx_any     = new GLib.Regex ("[\\u4e00-\\u9fff]");
+    var rx_lit     = new GLib.Regex (lit);
+    var rx_wrapped = new GLib.Regex ("I18n\\.s\\s*\\(\\s*" + lit);
+
+    var d = GLib.Dir.open (src_dir);
+    if (d == null)
+        return leaked.steal ();
+
+    string? name;
+    while ((name = d.read_name ()) != null) {
+        if (!name.has_suffix (".vala") || name == "i18n.vala")
+            continue;
+
+        string text;
+        try {
+            GLib.FileUtils.get_contents (src_dir + "/" + name, out text);
+        } catch {
+            continue;
+        }
+
+        var sb = new GLib.StringBuilder ();
+        GLib.MatchInfo? mi = null;
+        if (rx_wrapped.match (text, 0, out mi) && mi != null) {
+            int pos = 0;
+            while (mi.matches ()) {
+                int e0 = 0, e1 = 0;
+                if (mi.fetch_pos (0, out e0, out e1)) {
+                    sb.append (text.substring (pos, e0));
+                    pos = e1;
+                }
+                try {
+                    if (!mi.next ())
+                        break;
+                } catch (GLib.RegexError e) {
+                    break;
+                }
+            }
+            sb.append (text.substring (pos));
+        } else {
+            sb.append (text);
+        }
+
+        GLib.MatchInfo? m2 = null;
+        if (!rx_lit.match (sb.str, 0, out m2) || m2 == null)
+            continue;
+        while (m2.matches ()) {
+            int a = 0, b = 0;
+            if (m2.fetch_pos (0, out a, out b)) {
+                string raw = m2.fetch (0);
+                if (rx_any.match (raw)) {
+                    string val = unescape_vala (raw.substring (1, raw.length - 1));
+                    bool ok = false;
+                    foreach (var e in exempt)
+                        if (e == val) { ok = true; break; }
+                    if (!ok && !has_str (leaked, val))
+                        leaked.add (val);
+                }
+            }
+            try {
+                if (!m2.next ())
+                    break;
+            } catch (GLib.RegexError e) {
+                break;
+            }
+        }
+    }
+    return leaked.steal ();
 }

@@ -5,6 +5,27 @@
  */
 namespace AppPath {
 
+    /**
+     * 拿到本进程自己的可执行文件路径。
+     *
+     * 用 /proc/self/exe 而不是 GLib.Pr.getprgv() —— 后者在 Vala 0.56 的
+     * vapi 里没绑定，而且拿到的 argv[0] 是用户敲的字面量，经由 .desktop
+     * 启动时是「appimage-manager」这种没路径的名字，拼不出可执行文件。
+     *
+     * 读不出来（不是 Linux、或 /proc 没挂）时退回 argv[0]。
+     */
+    public static string self_exe () {
+        try {
+            var link = GLib.FileUtils.read_link ("/proc/self/exe");
+            if (link != null && link != "" &&
+                GLib.FileUtils.test (link, GLib.FileTest.IS_EXECUTABLE))
+                return link;
+        } catch {
+            // 落到下面的兜底
+        }
+        return "";
+    }
+
     /* ── 文件操作兼容层 ─────────────────────────────────────────── */
     /*
      * 发行版打包的 glib vapi 里缺少一部分便利函数

@@ -36,10 +36,13 @@ namespace RuleSet {
 
         public string severity_label () {
             switch (severity) {
-                case Severity.FATAL:   return SEV_FATAL;
-                case Severity.SERIOUS: return SEV_SERIOUS;
-                case Severity.WARNING: return SEV_WARNING;
-                default:               return SEV_NOTICE;
+                // 在这里翻译而不是改 const：这三个常量是规则元数据的一部分，
+                // 保持中文原样才能和 selftest 里对严重级别的断言对上，
+                // 只把「给人看的那一份」换成英文。
+                case Severity.FATAL:   return I18n.s (SEV_FATAL);
+                case Severity.SERIOUS: return I18n.s (SEV_SERIOUS);
+                case Severity.WARNING: return I18n.s (SEV_WARNING);
+                default:               return I18n.s (SEV_NOTICE);
             }
         }
 
@@ -188,42 +191,42 @@ namespace RuleSet {
         if (br.has_bom) {
             var p = new Problem ("D002", Severity.FATAL, "UTF-8 with BOM");
             p.current = "EF BB BF " + preview_hex (e.file_path);
-            p.fixed = "剥离 BOM（3 字节）";
+            p.fixed = I18n.s ("剥离 BOM（3 字节）");
             probs.add (p);
         }
 
         if (br.bad_utf8) {
-            var p = new Problem ("D004", Severity.FATAL, "编码非法字节");
+            var p = new Problem ("D004", Severity.FATAL, I18n.s ("编码非法字节"));
             p.current = preview_hex (e.file_path);
-            p.fixed = "转码为 UTF-8";
+            p.fixed = I18n.s ("转码为 UTF-8");
             probs.add (p);
         }
 
         if (br.has_crlf) {
-            var p = new Problem ("D003", Severity.FATAL, "CRLF 行尾");
-            p.current = "含 \\r\\n";
-            p.fixed = "全量转换为 LF";
+            var p = new Problem ("D003", Severity.FATAL, I18n.s ("CRLF 行尾"));
+            p.current = I18n.s ("含 \\r\\n");
+            p.fixed = I18n.s ("全量转换为 LF");
             probs.add (p);
         }
 
         if (br.missing_group) {
-            var p = new Problem ("D001", Severity.FATAL, "缺少 [Desktop Entry] 组头");
-            p.current = "首个有效行不是组声明";
-            p.fixed = "在文件最前插入 [Desktop Entry]";
+            var p = new Problem ("D001", Severity.FATAL, I18n.s ("缺少 [Desktop Entry] 组头"));
+            p.current = I18n.s ("首个有效行不是组声明");
+            p.fixed = I18n.s ("在文件最前插入 [Desktop Entry]");
             probs.add (p);
         }
 
         if (!e.parse_ok) {
-            var p = new Problem ("D000", Severity.FATAL, "文件无法解析");
+            var p = new Problem ("D000", Severity.FATAL, I18n.s ("文件无法解析"));
             p.current = e.parse_error;
-            p.fixed = "无法自动修复，建议完全重建";
+            p.fixed = I18n.s ("无法自动修复，建议完全重建");
             p.applyable = false;
             probs.add (p);
         }
 
         if (e.type == "" || e.type != "Application") {
-            var p = new Problem ("D005", Severity.FATAL, "Type= 缺失或值错误");
-            p.current = e.type == "" ? "（缺失）" : e.type;
+            var p = new Problem ("D005", Severity.FATAL, I18n.s ("Type= 缺失或值错误"));
+            p.current = e.type == "" ? I18n.s ("（缺失）") : e.type;
             p.fixed = "Type=Application";
             probs.add (p);
         }
@@ -231,27 +234,27 @@ namespace RuleSet {
         /* ── 🔴 严重 ─────────────────────────────────────────── */
 
         if (br.bad_version) {
-            var p = new Problem ("E001", Severity.SERIOUS, "Version= 超出规范支持范围");
+            var p = new Problem ("E001", Severity.SERIOUS, I18n.s ("Version= 超出规范支持范围"));
             p.current = "Version=%s".printf (br.version_raw);
             p.fixed = "Version=1.5";
             probs.add (p);
         }
 
         if (e.exec_line == "") {
-            var p = new Problem ("E002", Severity.SERIOUS, "Exec= 缺失");
-            p.current = "（缺失）";
+            var p = new Problem ("E002", Severity.SERIOUS, I18n.s ("Exec= 缺失"));
+            p.current = I18n.s ("（缺失）");
             p.fixed = DesktopFiles.build_exec_arg (app.path) + " %U";
             probs.add (p);
         } else {
             string extracted = e.exec_target ?? "";
 
             if (!extracted.has_prefix ("/") && extracted != "") {
-                var p = new Problem ("E003", Severity.SERIOUS, "Exec= 指向无法解析的路径");
+                var p = new Problem ("E003", Severity.SERIOUS, I18n.s ("Exec= 指向无法解析的路径"));
                 p.current = e.exec_line;
                 p.fixed = DesktopFiles.build_exec_arg (app.path) + " %U";
                 probs.add (p);
             } else if (extracted != "" && !AppPath.exists (extracted)) {
-                var p = new Problem ("E003", Severity.SERIOUS, "Exec= 指向的文件不存在");
+                var p = new Problem ("E003", Severity.SERIOUS, I18n.s ("Exec= 指向的文件不存在"));
                 p.current = "Exec=%s  ✗".printf (e.exec_line);
                 p.fixed = DesktopFiles.build_exec_arg (app.path) + " %U";
                 probs.add (p);
@@ -259,7 +262,7 @@ namespace RuleSet {
 
             // 转义问题
             if (needs_escape (e.exec_line, extracted)) {
-                var p = new Problem ("E004", Severity.SERIOUS, "Exec 路径未加引号或未转义");
+                var p = new Problem ("E004", Severity.SERIOUS, I18n.s ("Exec 路径未加引号或未转义"));
                 p.current = "Exec=%s".printf (e.exec_line);
                 p.fixed = DesktopFiles.build_exec_arg (app.path) + " %U";
                 probs.add (p);
@@ -267,7 +270,7 @@ namespace RuleSet {
 
             // 字面 %
             if (has_literal_percent (e.exec_line)) {
-                var p = new Problem ("E005", Severity.SERIOUS, "Exec 含未转义的字面 %");
+                var p = new Problem ("E005", Severity.SERIOUS, I18n.s ("Exec 含未转义的字面 %"));
                 p.current = "Exec=%s".printf (e.exec_line);
                 p.fixed = DesktopFiles.build_exec_arg (app.path) + " %U";
                 probs.add (p);
@@ -275,7 +278,7 @@ namespace RuleSet {
 
             // 包装脚本
             if (DesktopFiles.exec_is_wrapper (e.exec_line)) {
-                var p = new Problem ("E006", Severity.SERIOUS, "Exec 指向包装脚本而非 AppImage");
+                var p = new Problem ("E006", Severity.SERIOUS, I18n.s ("Exec 指向包装脚本而非 AppImage"));
                 p.current = "Exec=%s".printf (e.exec_line);
                 p.fixed = DesktopFiles.build_exec_arg (app.path) + " %U";
                 probs.add (p);
@@ -283,28 +286,28 @@ namespace RuleSet {
         }
 
         if (e.name == "") {
-            var p = new Problem ("E007", Severity.SERIOUS, "Name= 缺失");
-            p.current = "（缺失）";
+            var p = new Problem ("E007", Severity.SERIOUS, I18n.s ("Name= 缺失"));
+            p.current = I18n.s ("（缺失）");
             p.fixed = app.get_best_name ();
             probs.add (p);
         }
 
         if (has_duplicate_keys (e.file_path)) {
-            var p = new Problem ("E008", Severity.SERIOUS, "存在重复键");
-            p.current = "同名键在同组内出现多次";
-            p.fixed = "保留最后一次出现";
+            var p = new Problem ("E008", Severity.SERIOUS, I18n.s ("存在重复键"));
+            p.current = I18n.s ("同名键在同组内出现多次");
+            p.fixed = I18n.s ("保留最后一次出现");
             probs.add (p);
         }
 
         if (e.actions != "" && has_dangling_action (e)) {
-            var p = new Problem ("E009", Severity.SERIOUS, "Actions= 引用了不存在的组");
+            var p = new Problem ("E009", Severity.SERIOUS, I18n.s ("Actions= 引用了不存在的组"));
             p.current = "Actions=%s".printf (e.actions);
-            p.fixed = "移除该键";
+            p.fixed = I18n.s ("移除该键");
             probs.add (p);
         }
 
         if (!e.basename.has_suffix (".desktop")) {
-            var p = new Problem ("E010", Severity.SERIOUS, "文件后缀错误");
+            var p = new Problem ("E010", Severity.SERIOUS, I18n.s ("文件后缀错误"));
             p.current = e.basename;
             p.fixed = "%s.desktop".printf (AppPath.slugify (e.basename));
             probs.add (p);
@@ -318,89 +321,89 @@ namespace RuleSet {
                           && AppPath.exists (app.icon_path));
 
         if (e.icon == "") {
-            var p = new Problem ("I001", Severity.WARNING, "Icon= 缺失");
-            p.current = "（缺失）";
+            var p = new Problem ("I001", Severity.WARNING, I18n.s ("Icon= 缺失"));
+            p.current = I18n.s ("（缺失）");
             if (have_icon) {
-                p.fixed = "用已提取的图标 → %s".printf (AppPath.shorten (app.icon_path));
+                p.fixed = I18n.s ("用已提取的图标 → %s").printf (AppPath.shorten (app.icon_path));
             } else {
-                p.fixed = "需先提取图标：先关闭本窗口，点工具栏的「🖼 图标」";
+                p.fixed = I18n.s ("需先提取图标：先关闭本窗口，点工具栏的「🖼 图标」");
                 p.applyable = false;
             }
             probs.add (p);
         } else if (e.icon.has_prefix ("/") && !AppPath.exists (e.icon)) {
-            var p = new Problem ("I001", Severity.WARNING, "Icon 指向的文件不存在");
+            var p = new Problem ("I001", Severity.WARNING, I18n.s ("Icon 指向的文件不存在"));
             p.current = "Icon=%s  ✗".printf (e.icon);
             if (have_icon) {
-                p.fixed = "改用已提取的图标 → %s".printf (AppPath.shorten (app.icon_path));
+                p.fixed = I18n.s ("改用已提取的图标 → %s").printf (AppPath.shorten (app.icon_path));
             } else {
-                p.fixed = "需先提取图标：先关闭本窗口，点工具栏的「🖼 图标」";
+                p.fixed = I18n.s ("需先提取图标：先关闭本窗口，点工具栏的「🖼 图标」");
                 p.applyable = false;
             }
             probs.add (p);
         }
 
         if (e.categories == "") {
-            var p = new Problem ("I002", Severity.WARNING, "缺少 Categories=");
-            p.current = "（缺失）";
+            var p = new Problem ("I002", Severity.WARNING, I18n.s ("缺少 Categories="));
+            p.current = I18n.s ("（缺失）");
             p.fixed = "Categories=%s".printf (
                 app.categories != "" ? app.categories : "Utility;");
             probs.add (p);
         }
 
         if (e.startup_wm_class == "") {
-            var p = new Problem ("I003", Severity.WARNING, "缺少 StartupWMClass");
-            p.current = "（缺失）";
+            var p = new Problem ("I003", Severity.WARNING, I18n.s ("缺少 StartupWMClass"));
+            p.current = I18n.s ("（缺失）");
             p.fixed = "StartupWMClass=%s".printf (
                 app.startup_wm_class != "" ? app.startup_wm_class : app.get_best_name ());
             probs.add (p);
         }
 
         if (e.comment == "") {
-            var p = new Problem ("I004", Severity.WARNING, "缺少 Comment=");
-            p.current = "（缺失）";
+            var p = new Problem ("I004", Severity.WARNING, I18n.s ("缺少 Comment="));
+            p.current = I18n.s ("（缺失）");
             if (app.comment != "") {
                 p.fixed = app.comment;
             } else {
-                p.fixed = "AppImage 未提供描述，需手工填写";
+                p.fixed = I18n.s ("AppImage 未提供描述，需手工填写");
                 p.applyable = false;
             }
             probs.add (p);
         }
 
         if (e.terminal.down () == "true") {
-            var p = new Problem ("I005", Severity.WARNING, "Terminal=true 但看起来是 GUI 应用");
+            var p = new Problem ("I005", Severity.WARNING, I18n.s ("Terminal=true 但看起来是 GUI 应用"));
             p.current = "Terminal=true";
             p.fixed = "Terminal=false";
             probs.add (p);
         }
 
         if (e.hidden.down () == "true") {
-            var p = new Problem ("I006", Severity.WARNING, "Hidden=true 会让菜单不显示该条目");
+            var p = new Problem ("I006", Severity.WARNING, I18n.s ("Hidden=true 会让菜单不显示该条目"));
             p.current = "Hidden=true";
-            p.fixed = "Hidden=false（需你确认，可能是故意的）";
+            p.fixed = I18n.s ("Hidden=false（需你确认，可能是故意的）");
             p.needs_confirm = true;
             probs.add (p);
         }
 
         if (e.no_display.down () == "true") {
-            var p = new Problem ("I007", Severity.WARNING, "NoDisplay=true 会让菜单不显示该条目");
+            var p = new Problem ("I007", Severity.WARNING, I18n.s ("NoDisplay=true 会让菜单不显示该条目"));
             p.current = "NoDisplay=true";
-            p.fixed = "NoDisplay=false（需你确认，可能是故意的）";
+            p.fixed = I18n.s ("NoDisplay=false（需你确认，可能是故意的）");
             p.needs_confirm = true;
             probs.add (p);
         }
 
         string slug = AppPath.slugify (e.basename.replace (".desktop", ""));
         if (e.basename != "%s.desktop".printf (slug)) {
-            var p = new Problem ("I008", Severity.WARNING, "文件名不规范");
+            var p = new Problem ("I008", Severity.WARNING, I18n.s ("文件名不规范"));
             p.current = e.basename;
             p.fixed = "%s.desktop".printf (slug);
             probs.add (p);
         }
 
         if (e.try_exec == "") {
-            var p = new Problem ("I010", Severity.WARNING, "缺少 TryExec=");
-            p.current = "（缺失）";
+            var p = new Problem ("I010", Severity.WARNING, I18n.s ("缺少 TryExec="));
+            p.current = I18n.s ("（缺失）");
             p.fixed = app.path;
             probs.add (p);
         }
@@ -408,16 +411,16 @@ namespace RuleSet {
         /* ── ⚪ 提示 ─────────────────────────────────────────── */
 
         if (e.generic_name == "") {
-            var p = new Problem ("C001", Severity.NOTICE, "缺少 GenericName=");
-            p.current = "（缺失）";
+            var p = new Problem ("C001", Severity.NOTICE, I18n.s ("缺少 GenericName="));
+            p.current = I18n.s ("（缺失）");
             p.fixed = app.generic_name != "" ? app.generic_name : app.get_best_name ();
             probs.add (p);
         }
 
         if (!e.is_managed) {
-            var p = new Problem ("C004", Severity.NOTICE, "未被本工具管理（缺少标记键）");
-            p.current = "无 %s".printf (DesktopFiles.MARKER_PATH);
-            p.fixed = "认领后追加标记键";
+            var p = new Problem ("C004", Severity.NOTICE, I18n.s ("未被本工具管理（缺少标记键）"));
+            p.current = I18n.s ("无 %s").printf (DesktopFiles.MARKER_PATH);
+            p.fixed = I18n.s ("认领后追加标记键");
             p.applyable = false;
             probs.add (p);
         }
@@ -557,14 +560,14 @@ namespace RuleSet {
         try {
             string data;
             if (!GLib.FileUtils.get_contents (path, out data))
-                return "（无法读取）";
+                return I18n.s ("（无法读取）");
             var sb = new GLib.StringBuilder ();
             int n = data.length < 16 ? data.length : 16;
             for (int i = 0; i < n; i++)
                 sb.append ("%02X ".printf ((uint8) data[i]));
             return sb.str.strip ();
         } catch {
-            return "（无法读取）";
+            return I18n.s ("（无法读取）");
         }
     }
 }

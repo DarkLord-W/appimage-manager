@@ -180,6 +180,23 @@ public class AppConfig : GLib.Object {
     public bool is_configured () { return get_bool ("general", "configured", false); }
     public void mark_configured () { set_bool ("general", "configured", true); }
 
+    /**
+     * 界面语言。
+     *
+     * 存 "zh" / "en" / "auto"。auto 是默认值 —— 首次运行没有这个键，
+     * 此时读系统 locale，非中文环境直接显示英文，不用用户先来菜单里翻一遍。
+     *
+     * 存完不会立刻换语言：GTK 的控件文字是构造时定下的，要重建整棵控件树
+     * 才能换，代价远大于收益。所以是「存下 + 提示重启」。
+     */
+    public I18n.Lang language () {
+        return I18n.Lang.from_config (get_string ("general", "language", "auto"));
+    }
+
+    public void set_language (I18n.Lang lang) {
+        set_string ("general", "language", lang.to_config ());
+    }
+
     public int icon_size () {
         int s = get_int ("general", "icon_size", DEFAULT_ICON_SIZE);
         if (s != 128 && s != 256 && s != 512)
@@ -256,7 +273,7 @@ public class AppConfig : GLib.Object {
             GLib.FileUtils.set_contents (tmp, data);
             GLib.FileUtils.rename (tmp, path);
         } catch (GLib.Error e) {
-            warning ("配置保存失败: %s", e.message);
+            warning (I18n.s ("配置保存失败: %s"), e.message);
         }
     }
 }

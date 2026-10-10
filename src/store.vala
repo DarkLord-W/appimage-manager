@@ -87,7 +87,7 @@ public class AppEntry : GLib.Object {
 
     public string get_status_text () {
         if (match == MatchState.BROKEN)
-            return "失效";
+            return I18n.s ("失效");
 
         // 「外部创建」优先于健康度展示。
         //
@@ -98,17 +98,17 @@ public class AppEntry : GLib.Object {
         // 有问题就把数量附在后面，两个信息都不丢。
         if (match == MatchState.EXTERNAL)
             return problems.length > 0
-                ? "外部 · %d".printf (problems.length)
-                : "外部";
+                ? I18n.s ("外部 · %d").printf (problems.length)
+                : I18n.s ("外部");
 
         // 已纳入管理的条目，健康度才是首要信息
         if (health == HealthState.CORRUPT)
-            return "损坏";
+            return I18n.s ("损坏");
         if (health == HealthState.IMPROVABLE)
-            return "可优化 %d".printf (problems.length);
+            return I18n.s ("可优化 %d").printf (problems.length);
         if (match == MatchState.REGISTERED)
-            return "已创建";
-        return "新发现";
+            return I18n.s ("已创建");
+        return I18n.s ("新发现");
     }
 
     public Gdk.Pixbuf? get_thumbnail (int size) {

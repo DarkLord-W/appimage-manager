@@ -156,6 +156,10 @@ add_shot() { # add_shot <path> — remember only files that exist and are non-em
 # ── cleanup: always kill app + WM + Xvfb, drop the sandbox ───────────────────
 
 # app_stop is used by cleanup, so it must be defined before the trap is set.
+# It is PID-scoped on purpose: on a shared machine a broad `pkill -x` here
+# would repeatedly kill other agents' instances. The final cleanup() adds the
+# belt-and-suspenders `pkill -x appimage-manage` (same pattern as the
+# documented cleanup) for a stray instance of our own.
 app_stop() {
     if [ -n "$APP_PID" ] && kill -0 "$APP_PID" 2>/dev/null; then
         kill "$APP_PID" 2>/dev/null
@@ -164,10 +168,6 @@ app_stop() {
             sleep 0.1
         done
         kill -9 "$APP_PID" 2>/dev/null
-    fi
-    # comm is truncated to 15 chars: "appimage-manage"
-    if command -v pkill >/dev/null 2>&1; then
-        pkill -x appimage-manage 2>/dev/null
     fi
     APP_PID=""
     MAIN_WIN=""
@@ -183,6 +183,13 @@ cleanup() {
     echo "── cleanup ──"
 
     app_stop
+
+    # belt and suspenders: a stray instance of our app may have lost its PID
+    # (comm is truncated to 15 chars: "appimage-manage"). This is the
+    # documented cleanup pattern and runs once, at the end of the suite.
+    if command -v pkill >/dev/null 2>&1; then
+        pkill -x appimage-manage 2>/dev/null
+    fi
 
     if [ -n "$XFWM_PID" ] && kill -0 "$XFWM_PID" 2>/dev/null; then
         kill "$XFWM_PID" 2>/dev/null
@@ -1964,6 +1971,35 @@ step_safety() {
 #  RUN EVERYTHING — failures never stop the suite
 # ═════════════════════════════════════════════════════════════════════════════
 
+# On a busy/shared machine another process may run
+# `pkill -x appimage-manage` (the same cleanup this suite uses) and kill the
+# app mid-step. A step that FAILed while the app was dead is retried (up to
+# two retries) — the steps are idempotent (each prepares its own on-disk
+# state). A genuine crash would kill the retries too and still be FAIL.
+run_step() {
+    local step="$1" attempt n_before
+    for attempt in 1 2 3; do
+        n_before="${#RES_STEPS[@]}"
+        "$step"
+        if [ "${#RES_STEPS[@]}" -gt "$n_before" ] \
+           && [ "${RES_STATUS[$(( ${#RES_STEPS[@]} - 1 ))]}" = "FAIL" ] \
+           && ! app_alive && [ "$attempt" -lt 3 ]; then
+            echo "  note: $step failed while the app was dead — retry $attempt (killed by another process?)"
+            RES_STEPS=("${RES_STEPS[@]:0:$n_before}")
+            RES_STATUS=("${RES_STATUS[@]:0:$n_before}")
+            RES_DETAIL=("${RES_DETAIL[@]:0:$n_before}")
+            FAILURES=0
+            local s
+            for s in "${RES_STATUS[@]}"; do
+                [ "$s" = "FAIL" ] && FAILURES=$((FAILURES + 1))
+            done
+            sleep 5
+            continue
+        fi
+        return
+    done
+}
+
 # fixtures: regenerate on demand (never write into the shared dir ourselves)
 if [ ! -d "$FIXTURES_DIR/apps" ]; then
     echo "fixtures missing → running tests/make-fixtures.sh"
@@ -1980,25 +2016,25 @@ if [ ! -x "$APP_BIN" ]; then
     exit 1
 fi
 
-step_window
-step_rows
-step_actionbar
-step_menu_file
-step_menu_edit
-step_menu_view
-step_menu_tools
-step_menu_help
-step_dialogs
-step_actionbar_btns
-step_context_menu
-step_repair_ondisk
-step_claim_ondisk
-step_claim_idem
-step_filters
-step_search
-step_create_icon
-step_delete_ondisk
-step_empty_state
+run_step step_window
+run_step step_rows
+run_step step_actionbar
+run_step step_menu_file
+run_step step_menu_edit
+run_step step_menu_view
+run_step step_menu_tools
+run_step step_menu_help
+run_step step_dialogs
+run_step step_actionbar_btns
+run_step step_context_menu
+run_step step_repair_ondisk
+run_step step_claim_ondisk
+run_step step_claim_idem
+run_step step_filters
+run_step step_search
+run_step step_create_icon
+run_step step_delete_ondisk
+run_step step_empty_state
 step_safety
 
 # ── summary ──────────────────────────────────────────────────────────────────
