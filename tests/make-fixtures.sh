@@ -287,16 +287,77 @@ EOF
 # ══════════════════════════════════════════════════════════════════
 #  3. 图标
 # ══════════════════════════════════════════════════════════════════
+# 画一个 64x64 的 RGBA 图标：中心实心圆、圆外全透明。
+#
+# 用 zlib + struct 手写 PNG，不依赖 cairo / PyGObject —— 那两个包在
+# GitHub runner 的默认镜像里都没有，会让这一步直接崩
+# （实测就是 ModuleNotFoundError: No module named 'cairo'）。
+# 这里只需要画一个圆，为它拖两个图形库进来不划算。
+#
+# alpha 必须保留：图标安装路径要处理的就是带透明通道的 PNG，
+# 换成不透明的图会让那条路径测不到真东西。
 python3 - "$SANDBOX/icons/perfect.png" <<'PY'
-import gi, sys, cairo
-gi.require_version('Gtk','3.0')
-import cairo
-surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, 64, 64)
-cr = cairo.Context(surf)
-cr.set_source_rgb(0.2, 0.7, 0.5)
-cr.arc(32, 32, 26, 0, 6.2832)
-cr.fill()
-surf.write_to_png(sys.argv[1])
+import struct, sys, zlib
+
+W = H = 64
+R = 26.0                    # 圆的半径
+CX = CY = 32.0              # 圆心
+FG = (51, 179, 128, 255)    # 实心圆颜色（原来 cairo 用的 0.2/0.7/0.5）
+BG = (0, 0, 0, 0)           # 圆外全透明
+
+def png_chunk(tag, data):
+    return (struct.pack('>I', len(data)) + tag + data
+            + struct.pack('>I', zlib.crc32(tag + data) & 0xFFFFFFFF))
+
+# 每条扫描线前面要加一个过滤器字节（0 = 不过滤）
+raw = bytearray()
+for y in range(H):
+    raw.append(0)
+    for x in range(W):
+        dx, dy = x + 0.5 - CX, y + 0.5 - CY
+        raw.extend(FG if dx * dx + dy * dy <= R * R else BG)
+
+png = (b'\x89PNG\r\n\x1a\n'
+       + png_chunk(b'IHDR', struct.pack('>IIBBBBB', W, H, 8, 6, 0, 0, 0))
+       + png_chunk(b'IDAT', zlib.compress(bytes(raw), 9))
+       + png_chunk(b'IEND', b''))
+
+with open(sys.argv[1], 'wb') as f:
+    f.write(png)
+PY
+
+# 写完立刻读回来验一遍：夹具少了图标或格式不对，后面几步会莫名其妙地
+# 失败在别处，不如在这里就拦住。
+python3 - "$SANDBOX/icons/perfect.png" <<'PY'
+import struct, sys
+
+path = sys.argv[1]
+data = open(path, 'rb').read()
+problems = []
+
+if data[:8] != b'\x89PNG\r\n\x1a\n':
+    problems.append('PNG 魔数不对')
+
+w = h = depth = ctype = None
+if len(data) > 33 and data[12:16] == b'IHDR':
+    w, h, depth, ctype = struct.unpack('>IIBB', data[16:26])
+
+if (w, h) != (64, 64):
+    problems.append('尺寸是 %sx%s，期望 64x64' % (w, h))
+if depth != 8:
+    problems.append('位深是 %s，期望 8' % depth)
+if ctype != 6:
+    problems.append('颜色类型是 %s，期望 6（RGBA，必须带 alpha 通道）' % ctype)
+# PNG 尾部的 12 字节是 [长度4][IEND4][CRC4]，所以 IEND 落在 -8:-4
+if data[-8:-4] != b'IEND':
+    problems.append('缺少 IEND 收尾')
+
+if problems:
+    for x in problems:
+        print('  x 图标夹具不合格：' + x, file=sys.stderr)
+    sys.exit(1)
+
+print('  图标夹具 OK：%dx%d RGBA（%d 字节）' % (w, h, len(data)))
 PY
 
 # ══════════════════════════════════════════════════════════════════
