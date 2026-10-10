@@ -314,6 +314,12 @@ write_config() { # write_config <scan-dirs-value>
 [general]
 configured=true
 icon_size=256
+# 界面语言钉死成中文，不跟随宿主 locale。
+#
+# 缺这一行时 language 走 auto → 跟随系统 LANG：CI 和开发机大多是
+# en_US.UTF-8，界面全是英文，而本测试按中文标题（「设置」「修复历史」）
+# 找对话框，会整片 FAIL。测试不该依赖跑它的机器是什么语言。
+language=zh
 
 [scan]
 recursive=true
