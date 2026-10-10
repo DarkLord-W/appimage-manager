@@ -4,6 +4,21 @@
 
 编译产物是**单个原生二进制**，拷到任何装了 GTK3 的 Linux 上都能直接跑。
 
+## 下载
+
+| 格式 | 适合谁 |
+|---|---|
+| `AppImage-Manager-*-x86_64.AppImage` | 免安装，赋可执行权限后双击即用 |
+| `appimage-manager-*-linux-x86_64.tar.gz` | 想免安装、又要能进应用菜单 |
+| `appimage-manager_*_amd64.deb` | Debian / Ubuntu / Kali / Mint |
+| `appimage-manager-*.x86_64.rpm` | Fedora / RHEL / openSUSE |
+| `appimage-manager-*.pkg.tar.zst` | Arch / Manjaro |
+
+从 [Releases](https://github.com/DarkLord-W/appimage-manager/releases) 下载。
+
+原生二进制与 AppImage 都**依赖系统的 GTK3**（桌面发行版基本都有）。用
+deb / rpm / arch 包时依赖会被自动声明并装好。
+
 ---
 
 ## 功能
@@ -181,6 +196,20 @@ sudo pacman -S vala gtk3 json-glib pkgconf
 
 版本要求：Vala ≥ 0.48，GTK ≥ 3.24。
 
+跑测试还需要（界面自动化用）：
+
+```bash
+sudo apt install desktop-file-utils xvfb xfwm4 xdotool imagemagick xclip
+```
+
+```bash
+make selftest        # 240 项引擎自测，不依赖图形环境
+tests/ui-test.sh     # 20 步界面自动化，需要上面那套工具
+```
+
+CI 上也是跑这两条 —— 缺工具时 `ui-test.sh` 会跳过并退 0，所以本地
+没装全也不会误判为失败。
+
 ### 构建
 
 ```bash
@@ -234,6 +263,26 @@ type-2 AppImage 里取出运行时，配上系统自带的 `mksquashfs` 自己�
 的往返校验才会被采用。
 
 `dist/` 和 `runtime/` 已在 `.gitignore` 里。
+
+### 打成 deb / rpm / arch 包
+
+```bash
+# .desktop 里有 @PREFIX@ 占位符要替换，而 nfpm 不做替换，
+# 所以先用 make install 把替换后的文件暂存到 build/pkg
+make install DESTDIR=build/pkg PREFIX=/usr
+
+cd packaging
+/tmp/nfpm package --config nfpm.yaml --packager deb      --target ../dist
+/tmp/nfpm package --config nfpm.yaml --packager rpm      --target ../dist
+/tmp/nfpm package --config nfpm.yaml --packager archlinux --target ../dist
+```
+
+用 [nfpm](https://nfpm.goreleaser.com/) 而非 `debian/rules` + `.spec` +
+`PKGBUILD` 三套文件：一处配置生成三种包，各系的依赖名不同（GTK3 在 deb
+上叫 `libgtk-3-0`、新版还是 `libgtk-3-0t64`，rpm 与 arch 上叫 `gtk3`），
+统一维护比三份文件可靠。
+
+配置在 `packaging/nfpm.yaml`，改依赖只改那里。
 
 ---
 
