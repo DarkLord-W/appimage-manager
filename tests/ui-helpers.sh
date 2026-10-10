@@ -48,7 +48,8 @@ learn_dialog_class() { # learn_dialog_class <window-id>
 }
 
 find_win_by_name() { # find_win_by_name <regex> — echoes id or nothing
-    xdotool search --onlyvisible --name "$1" 2>/dev/null | tail -n 1
+    # time-boxed: a hung/broken X server must never wedge the whole suite
+    timeout 4 xdotool search --onlyvisible --name "$1" 2>/dev/null | tail -n 1
 }
 
 wait_win_by_name() { # wait_win_by_name <regex> [tries] [interval]
@@ -78,7 +79,7 @@ wait_win_gone_by_name() { # wait_win_gone_by_name <regex> [tries] [interval]
 }
 
 app_window_ids() { # all visible windows carrying the app's dialog class
-    xdotool search --onlyvisible --class "$DIALOG_CLASS" 2>/dev/null
+    timeout 4 xdotool search --onlyvisible --class "$DIALOG_CLASS" 2>/dev/null
 }
 
 count_app_dialogs() { # number of visible dialog-class windows (not the main
@@ -218,17 +219,17 @@ menu_pick() { # menu_pick <alt+key> <downs> — open menu, move, activate
 # ── screenshot / image helpers ───────────────────────────────────────────────
 
 grab_main() { # grab_main <png>
-    import -window "$MAIN_WIN" "$1" 2>>"$OUT_DIR/import.log" || return 1
+    timeout 20 import -window "$MAIN_WIN" "$1" 2>>"$OUT_DIR/import.log" || return 1
     [ -s "$1" ]
 }
 
 grab_root() { # grab_root <png>
-    import -window root "$1" 2>>"$OUT_DIR/import.log" || return 1
+    timeout 20 import -window root "$1" 2>>"$OUT_DIR/import.log" || return 1
     [ -s "$1" ]
 }
 
 grab_win() { # grab_win <window-id> <png>
-    import -window "$1" "$2" 2>>"$OUT_DIR/import.log" || return 1
+    timeout 20 import -window "$1" "$2" 2>>"$OUT_DIR/import.log" || return 1
     [ -s "$2" ]
 }
 
