@@ -1,0 +1,350 @@
+# packaging/nfpm.yaml — deb / rpm / archlinux 三族打包配置
+#
+# 用法（**必须在 packaging/ 目录下执行**，原因见下面第 2 条）：
+#
+#   cd ..
+#   make
+#   make install DESTDIR=build/pkg PREFIX=/usr      # ← PREFIX 必须是 /usr！
+#   mkdir -p dist
+#   cd packaging
+#   nfpm package -f nfpm.yaml -p deb        -t ../dist/
+#   nfpm package -f nfpm.yaml -p rpm        -t ../dist/
+#   nfpm package -f nfpm.yaml -p archlinux  -t ../dist/
+#
+# 之所以锚定 packaging/ 而不是仓库根：.github/workflows 里的两个打包步骤
+# 都带 `working-directory: packaging`，也就是 CWD 就是 packaging/。
+# contents.src 和 scripts.* 都是**相对当前工作目录**解析的，
+# 本文件的路径必须和那边的 CWD 对齐，否则 CI 里每一条 contents 都会找不到源文件。
+#
+# ── 三个必须知道的坑 ────────────────────────────────────────────────
+#
+# 1) PREFIX 必须是 /usr，不是 /usr/local。
+#    Makefile 里 PREFIX 默认值是 /usr/local，而 .desktop 是用 sed 把
+#    data/appimage-manager.desktop.in 里的 @PREFIX@ 替换掉生成的。
+#    如果打包时忘了传 PREFIX=/usr，包里的 .desktop 会写上
+#    Exec=/usr/local/bin/appimage-manager —— 而这个路径包根本不装，
+#    装完图标能看见、点一下就「找不到应用程序」。
+#
+# 2) contents.src 和 scripts.* 都是**相对当前工作目录**解析的，
+#    不是相对本文件所在目录（nfpm v2.41.0 内部直接 os.Open(path)）。
+#    所以上面的命令必须先 cd packaging。
+#
+# 3) make install 会顺手在暂存目录里生成两个缓存文件：
+#       build/pkg/usr/share/applications/mimeinfo.cache
+#       build/pkg/usr/share/icons/hicolor/icon-theme.cache
+#    它们是 makefile 第 94–95 行对着 DESTDIR 跑缓存工具的副产物，
+#    只对那棵暂存树有意义。本文件只逐个列出 4 个源文件（而不是整棵
+#    目录打包），所以它们不会混进包里 —— 千万别改成 type: tree 打包
+#    build/pkg，那会把为暂存树生成的缓存一起塞进 .deb，
+#    装上去会覆盖掉系统自己的 mime/icon 缓存。
+#
+# ── 顺手核对过的实现细节（nfpm v2.41.0 源码） ───────────────────────
+#
+#   · 内容类型 type 的合法取值只有
+#       file / dir / tree / symlink / config / config|noreplace /
+#       config|missingok / ghost / doc / licence / readme
+#     写别的（比如 desktop、share）会直接报
+#     `invalid content type: xxx`，不是忽略。所以 .desktop 文件只能用
+#     type: file，图标也只能用 type: file。
+#   · overrides 的键是 packager 名：deb / rpm / archlinux（注意不是 arch）。
+#   · 每个 packager 的依赖都写 overrides.<packager>.depends，
+#     键名是 depends，不是 dependencies。
+#   · nfpm package 没有 --version 参数，也没有 {{ .Version }} 模板。
+#     下面 version 只能写死。
+#
+# ── ⚠ 与 .github/workflows 的三处不一致（那两份文件不归本次改动管，
+#    记录在此以便接手的人一次改齐） ─────────────────────────────────
+#
+#   1. 两份 workflow 都写了 `--packager arch`，但 arch 后端注册的名字
+#      是 **archlinux**（arch.go 里 const packagerName = "archlinux"）。
+#      实测 `nfpm package --packager arch` 直接报
+#      `no packager registered for the format arch`，CI 必挂。
+#      合法值只有 [apk|archlinux|deb|ipk|rpm]。
+#   2. 两份 workflow 在跑 nfpm 之前都**没有** `make install DESTDIR=... `，
+#      而本文件第 3 条 contents 的 src 指向暂存树里的 .desktop
+#      （只有它需要 sed 替换 @PREFIX@，nfpm 自己不会做）。
+#      缺了这一步，nfpm 会在打包时报打不开源文件。
+#      需要补：`make install DESTDIR=build/pkg PREFIX=/usr`（在仓库根跑）。
+#   3. 两份 workflow 的 `working-directory: packaging` 决定了 CWD 是
+#      packaging/，本文件的相对路径正是按这个 CWD 锚定的（见第 2 条坑）。
+#      若将来改成在仓库根执行，contents.src 的 ../ 前缀要一起去掉。
+
+name: appimage-manager
+
+# ELF 64-bit LSB pie executable, x86-64 —— `file appimage-manager` 实测。
+# 这是编译出来的原生 x86_64 可执行文件，不能写成 all（all 意味着
+# 同一份包能装到任何架构上，而这份二进制只在这一个架构上能跑）。
+# nfpm 会自动翻译：deb 保持 amd64，rpm 保持 amd64，
+# archlinux 自动映射成 x86_64（arch.go 里的 archToArchLinux 表）。
+arch: amd64
+
+platform: linux
+
+# 版本号：写死 1.0.0，必须和 src/version.vala 的 APPMGR_VERSION 保持一致。
+#
+# 为什么不用模板：nfpm v2.41.0 的 `nfpm package` 只有 --config/--target/
+# --packager 三个参数，**没有 --version**，配置里的值也不走
+# text/template，所以 `{{ .Version }}` 会被原样当成字面量写进包名。
+# 它唯一支持的注入方式是 os.Expand 的 $VAR（见 nfpm.go expandEnvVars），
+# 但那样一旦 CI 忘了 export，版本号会静默回退成 v0.0.0-rc0 —— 比写死更糟。
+#
+# 想在 CI 里从 version.vala 取版本，用「生成一份临时配置」的办法
+# （这也是 Makefile / scripts/make-appimage.sh 现有的做法）：
+#
+#   V=$(sed -n 's/.*APPMGR_VERSION[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
+#       src/version.vala | head -n 1)
+#   sed "s|^version: .*|version: $V|" packaging/nfpm.yaml > build/nfpm.yaml
+#   nfpm package -f build/nfpm.yaml -p deb -t dist/
+#
+version: 1.0.0
+
+# semver：万一有人把版本写成 1.1.0-rc1，nfpm 会自动拆成
+# Version=1.1.0 + Prerelease=rc1，deb 侧落成 1.1.0~rc1，
+# 版本序正好排在 1.1.0 前面，不会出现「rc 版比正式版新」。
+version_schema: semver
+
+# release 相当于 deb 的 revision / rpm 的 Release / arch 的 pkgrel。
+# 改上游版本时它要回到 1，只有「同一个上游版本重发」时才 +1。
+release: 1
+
+# 不写 epoch：Debian 政策说 epoch 要慎用，一个全新的包没有需要跨过的
+# 历史版本，留空比写个 1 更干净。
+# epoch: 1
+
+# Debian section。utils 是这类系统管理工具的常规归属。
+section: utils
+
+# Debian policy 里第三方桌面程序基本都是 optional。
+# extra 只留给非 free/extra 仓库。
+priority: optional
+
+maintainer: darklord-w <darklord-w@users.noreply.github.com>
+
+# 只有 rpm 会用上（写进 Vendor 字段），写上方便 rpm -qi 溯源。
+vendor: darklord-w
+
+homepage: https://github.com/darklord-w/appimage-manager
+
+license: MIT
+
+# 第一行是单行摘要：rpm 拿它当 Summary，deb 拿它当 synopsis。
+description: |
+  AppImage Manager — 扫描 AppImage 并维护规范的 .desktop 启动器
+  Scan AppImage files, then create, repair and health-check their .desktop
+  launchers so the desktop menu entries stay valid and consistent.
+
+# 路径里没有通配符，关掉 globbing 可以保证将来有人把路径改成含
+# [ ] ? * 的名字时，不会被静默展开成另一个文件（或者悄悄一个都没匹配上）。
+disable_globbing: true
+
+# ── 文件清单 ────────────────────────────────────────────────────────
+#
+# 和 `make install DESTDIR=build/pkg PREFIX=/usr` 的产物逐条对应，
+# 顺序按「可执行文件 → 数据 → 桌面入口 → 图标」排，只是给人看的，
+# nfpm 内部会自己排序。
+#
+# mode 全部显式写死，不依赖源文件的权限位：git 不跟踪非可执行位的
+# 变化，而 umask 也会影响 nfpm 对未指定 mode 文件的处理
+# （files.WithFileInfoDefaults 会做 info.Mode() &^ umask）。
+contents:
+  - src: ../appimage-manager
+    dst: /usr/bin/appimage-manager
+    type: file
+    file_info:
+      mode: 0755
+      owner: root
+      group: root
+
+  # type: config —— style.css 是本程序**只读**的样式表，但它是给用户改的：
+  # src/window.vala:899 起的查找顺序是
+  #   /usr/local/share/appimage-manager/style.css
+  #   /usr/share/appimage-manager/style.css     ← 装包落的就是这个
+  #   data/style.css
+  #   <AppPath.data_root()>/style.css
+  # 程序自己从不写它，可用户一定会改它（换主题配色）。
+  # 标成 config 之后：deb 写进 conffiles，dpkg 升级时发现本地改过
+  # 会保留用户的版本而不是硬覆盖；rpm 变 %config；arch 写进
+  # .PKGINFO 的 backup，卸载时留一份 .pacsave。
+  # 代价是无人值守升级可能弹 conffile 提示，用
+  # DEBIAN_FRONTEND=noninteractive / apt -o Dpkg::Options::=--force-confold
+  # 可以压掉，这个代价值得。
+  - src: ../data/style.css
+    dst: /usr/share/appimage-manager/style.css
+    type: config
+    file_info:
+      mode: 0644
+      owner: root
+      group: root
+
+  # 唯一必须从暂存目录取的源文件：仓库里只有 data/appimage-manager.desktop.in，
+  # 里面留着 @PREFIX@ 占位符，nfpm 不会做 sed 替换，
+  # 所以只能引用 make install 渲染出来的成品。
+  - src: ../build/pkg/usr/share/applications/appimage-manager.desktop
+    dst: /usr/share/applications/appimage-manager.desktop
+    # 注意：这里只能是 file。nfpm v2.41.0 根本没有 type: desktop
+    # （合法类型见文件头），写上去会报 invalid content type。
+    # dpkg 的 update-desktop-database 刷新改由下面的 deb.triggers 负责，
+    # 那才是 Debian 上本来就该走的机制。
+    type: file
+    file_info:
+      mode: 0644
+      owner: root
+      group: root
+
+  # 图标用 type: file 而不是某种「share」类型：
+  # Icon=appimage-manager 是按名字查 hicolor 主题的
+  # （data/appimage-manager.desktop.in 里的注释解释过为什么不能写死路径），
+  # 落进 /usr/share/icons/hicolor/256x256/apps/ 就算装对了；
+  # 它也不该是 config —— 把二进制资源标成 conffile 只会在升级时
+  # 多一次无谓的冲突询问。
+  - src: ../data/appimage-manager.png
+    dst: /usr/share/icons/hicolor/256x256/apps/appimage-manager.png
+    type: file
+    file_info:
+      mode: 0644
+      owner: root
+      group: root
+
+# ── 维护脚本 ────────────────────────────────────────────────────────
+#
+# 三个阶段共用同一个脚本文件，因为三族维护脚本的语义不同
+# （deb: postinst/prerm/postrm；rpm: %post/%preun/%postun；
+#   pacman: .INSTALL 里的函数），但脚本要干的事完全一样 ——
+# 「刷新缓存」在安装之后和卸载之后都是对的，没有需要按参数分派的逻辑。
+#
+# 值必须是**文件路径**而不是内联脚本文本：nfpm v2.41.0 的 deb.go
+# 用 os.Open(path)、rpm.go 用 os.ReadFile(path)、arch.go 同样是 os.Open(path)，
+# 三处都把这段字符串当文件名。写 `postinstall: |- ...` 会被当成一个
+# 超长的文件名而失败。
+scripts:
+  postinstall: ./maintainer-scripts.sh
+  preremove: ./maintainer-scripts.sh
+  postremove: ./maintainer-scripts.sh
+
+rpm:
+  # Packager 本来就会 fallback 到 maintainer（rpm.go 里是
+  # defaultTo(info.RPM.Packager, info.Maintainer)），写出来只是为了明确。
+  packager: darklord-w
+  # 多数现代发行版已经不看 Group 了（rpm -qip 会显示 Group: (none)，
+  # 也没人会去读），但 EL5 一代的工具链和部分企业仓库的元数据校验
+  # 还要求这个字段存在。填 Unspecified 是 rpm 世界的惯例占位值。
+  group: Unspecified
+  # rpmpack 支持 gzip/lzma/xz/zstd（逗号后还可跟级别）。选 zstd 是跟着
+  # 现代 Fedora/openSUSE 的默认走，压缩率和速度都比 gzip 好；
+  # gzip 是 nfpm 唯一走测试覆盖的默认值，想回退随时改这里。
+  compression: zstd
+  scripts:
+    # %posttrans 在整个事务收尾时跑一次，比 %post 更晚。
+    # 同一份脚本再跑一遍是安全的：它是幂等的。
+    posttrans: ./maintainer-scripts.sh
+
+archlinux:
+  # 不写会被填成 "Unknown Packager"（arch.go createPkginfo 里的
+  # defaultStr(..., "Unknown Packager")），在 .PKGINFO 里很难看。
+  packager: darklord-w
+  scripts:
+    postupgrade: ./maintainer-scripts.sh
+
+deb:
+  triggers:
+    # Debian 上刷新菜单数据库的正规机制就是 dpkg trigger，
+    # desktop-file-utils 装了以后会注册这个名字。
+    # 用 interest-noawait 而不是让 postinst 去跑：dpkg 会把它攒到
+    # 合适时机批量执行，一次装十个包也只扫一次 applications 目录，
+    # 而且用 --no-triggers 装包时不会真的去执行外部命令（安全）。
+    # 如果 desktop-file-utils 没装，这个 interest 无人认领，dpkg 静默跳过。
+    interest_noawait:
+      - update-desktop-database
+    # 图标缓存这边不挂 trigger：Debian 并没有一个公开稳定的
+    # 「hicolor 图标缓存」trigger 名字可依赖，交给 postinstall 脚本更稳。
+
+# ── 分族依赖 ────────────────────────────────────────────────────────
+#
+# 依赖名单按「DT_NEEDED 里出现的直接 .so」来定，不按 ldd 的传递闭包：
+# 传递依赖交给各家的包管理器去解，写进来只会让升级被无关包卡住。
+# 6 个直接依赖对应 readelf -d 的结果：
+#   libgtk-3.so.0 / libgdk-3.so.0 / libgdk_pixbuf-2.0.so.0
+#   libpangocairo-1.0.so.0 / libpango-1.0.so.0 / libcairo.so.2
+#   libjson-glib-1.0.so.0 / libgio-2.0.so.0 / libgobject-2.0.so.0
+#   libglib-2.0.so.0
+# （libm/libc 是 libc6 的内容，不写。）
+overrides:
+  deb:
+    depends:
+      # GTK3 / GLib 在 Debian 13（trixie）完成了 time64 过渡，
+      # 包名加了 t64 后缀，而且**旧名已经不是过渡包了**——
+      # Kali 2026.2 上 `apt-cache policy libgtk-3-0` 的 Candidate 是 (none)，
+      # 只认 libgtk-3-0t64。写成 `新名 | 旧名` 的备选形式，
+      # 在 trixie 上满足第一个，在 bookworm/bullseye/Ubuntu 上满足第二个，
+      # 一份配置同时覆盖新旧发行版。
+      - libgtk-3-0t64 | libgtk-3-0
+      - libglib2.0-0t64 | libglib2.0-0
+      # 这三个没有参与 t64 改名，直接写死。
+      - libgdk-pixbuf-2.0-0
+      - libpango-1.0-0
+      - libcairo2
+      - libjson-glib-1.0-0
+    recommends:
+      # 强证据支持放 recommends 而不是 depends：本程序会 fork 出
+      # /usr/bin/desktop-file-validate 校验自己写的 .desktop
+      # （src/desktopfiles.vala:535），但工具不在时 run_capture() 直接
+      # 返回 false、validate_content() 返回空串，也就是「跳过校验、判定通过」
+      # ——不会崩、不会阻断使用。所以它是「有更好，没有也能跑」，
+      # 放进 depends 会让最小化安装（apt --no-install-recommends 之外的
+      # apt install 也会装 Recommends）平白多拉一个包。
+      - desktop-file-utils
+      # 本程序运行期完全不碰 GObject Introspection
+      # （DT_NEEDED 里没有任何 libgirepository-1.0），
+      # 所以它不是硬依赖。放进 recommends 只是给想用 gjs / python3-gi
+      # 给本程序写扩展脚本、或者想在测试环境里 introspect 同一套 GTK3 的
+      # 用户一个开箱即用的环境；嫌大的用 --no-install-recommends 完全无影响。
+      - gir1.2-gtk-3.0
+
+  rpm:
+    depends:
+      # rpm 系（Fedora / RHEL / openSUSE）这几个名字和 Debian 系完全不同，
+      # 千万别照抄上面那份。特别注意 gdk-pixbuf 在 rpm 系里叫
+      # gdk-pixbuf2（没有 2.0-0 这种 SONAME 式的后缀）。
+      # cairo 虽然是 libpango 的传递依赖，但 libcairo.so.2 出现在
+      # 我们的 DT_NEEDED 里，就该由我们自己声明。
+      - gtk3
+      - glib2
+      - gdk-pixbuf2
+      - pango
+      - cairo
+      - json-glib
+    recommends:
+      # rpm 有弱依赖（dnf 的 Recommends），语义和 deb 的 Recommends 对齐。
+      # openSUSE 上包名同样叫 desktop-file-utils。
+      - desktop-file-utils
+
+  archlinux:
+    depends:
+      # Arch 系和 rpm 系同名（gtk3/glib2/gdk-pixbuf2/pango/cairo/json-glib），
+      # 但这是一份独立列表而不是复用 rpm 的：nfpm 的 overrides 是按
+      # packager 名各自替换的，共享一条会让以后改其中一族时误伤另一族。
+      - gtk3
+      - glib2
+      - gdk-pixbuf2
+      - pango
+      - cairo
+      - json-glib
+      # desktop-file-utils 在这里是**硬依赖**，和 deb/rpm 不一样：
+      # nfpm 的 pacman 后端压根不读 recommends
+      # （arch.go createPkginfo 只写 depend，不写 recommends），
+      # 写在那儿等于静默丢弃。所以要么放 depends，要么等于没写。
+      # Arch 上 desktop-file-utils 只依赖 glib2/libxml2，很轻，
+      # 而且本程序把 desktop-file-validate 当核心功能在用
+      # （写入前必须校验、校验不过就回滚），值这个硬依赖。
+      - desktop-file-utils
+
+# ── 已知没做的事（留给后续接手的人） ──────────────────────────────────
+#
+# · 没装 LICENSE / 版权文件。`make install` 的产物里就没有它，
+#   本文件严格对齐 make install 的输出，不想在这里凭空多塞文件。
+#   要补 Debian policy 要求的 /usr/share/doc/<pkg>/copyright，
+#   得先改 Makefile 的 install 目标（那份文件不归本次改动管）。
+# · 没做签名（deb.signature / rpm.signature）。签名需要私钥，
+#   应该由 CI 用 --config + 环境变量注入，不该进版本库。
+# · 没做 changelog（changelog:）。chglog 需要一份 YAML changelog，
+#   同理属于别的文件。

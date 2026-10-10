@@ -1,0 +1,306 @@
+name: Release
+
+# 只在打 tag 时跑。产出四种包并挂到 GitHub Release：
+#   · AppImage        免安装，双击即用
+#   · 原生二进制+数据 tar.gz   解压即用，不需要 root
+#   · deb             Debian / Ubuntu / Kali / Mint
+#   · rpm             Fedora / RHEL / openSUSE
+#   · pkg.tar.zst     Arch / Manjaro
+#
+# 版本号从 tag 取（v1.2.3 → 1.2.3），不硬编码 —— 硬编码的版本号早晚
+# 会和实际发布对不上，而那种不一致排查起来很费时间。
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 手动触发时的版本号（如 1.2.3）
+        required: true
+
+permissions:
+  contents: write   # 创建 Release 需要
+
+jobs:
+  release:
+    name: 构建并发布
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 打 tag 发布必须拿完整历史，否则版本号推导和子模块都不可靠
+          fetch-depth: 0
+
+      - name: 推导版本号
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            V="${{ github.event.inputs.version }}"
+          else
+            V="${GITHUB_REF_NAME#v}"
+          fi
+          # 版本号会进包名，必须校验 —— 免得一个畸形 tag 打出乱码文件名
+          echo "$V" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || {
+            echo "::error::版本号不合法: '$V'（应形如 1.2.3）"
+            exit 1
+          }
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "构建版本 $V"
+
+      - name: 安装编译依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            valac libgtk-3-dev libjson-glib-dev \
+            squashfs-tools desktop-file-utils
+
+      - name: 编译
+        run: |
+          make 2>&1 | tee build.log
+          test "$(grep -c 'error:' build.log)" -eq 0 || {
+            grep -B2 -A4 'error:' build.log | head -60
+            exit 1
+          }
+
+      - name: 引擎自测（发布前必须全绿）
+        run: |
+          tests/make-fixtures.sh
+          make selftest
+
+      # ── AppImage runtime ──────────────────────────────────────────
+      #
+      # runtime 不是本项目构建的产物 —— 它是 AppImageKit 的启动器，
+      # AppImage 格式本身就是「ELF runtime ++ squashfs」。AppImage 只负责
+      # 挂载并执行里面的 AppRun，程序和数据都在后面那段 squashfs 里。
+      #
+      # 它必须从 AppImageKit 官方仓库取。这里没有走 scripts/make-appimage.sh
+      # 的自动提取路径（那条要从本机现成的 AppImage 里截，CI 上没有），
+      # 而是直接把下载的官方 runtime 通过 $RUNTIME 环境变量交给脚本 ——
+      # 脚本支持这个入口，优先级最高。
+      - name: 下载 AppImage runtime
+        id: runtime
+        run: |
+          set -euo pipefail
+          URL=https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64
+          mkdir -p runtime
+          curl -fsSL --retry 3 -o runtime/appimage-runtime-x86_64 "$URL"
+          chmod +x runtime/appimage-runtime-x86_64
+
+          SZ=$(stat -c%s runtime/appimage-runtime-x86_64)
+          echo "下载到 $SZ 字节"
+          test "$SZ" -ge 10240 || {
+            echo "::error::runtime 体积异常（$SZ 字节），多半是下载到了错误页面"
+            exit 1
+          }
+          file runtime/appimage-runtime-x86_64 | grep -q ELF || {
+            echo "::error::runtime 不是 ELF"
+            exit 1
+          }
+          # 脚本自己还会做一次往返校验（自报偏移 + --appimage-extract），
+          # 这里只做最基础的体积与格式检查，失败信息更直白。
+
+      - name: 打包 AppImage
+        env:
+          RUNTIME: ${{ github.workspace }}/runtime/appimage-runtime-x86_64
+        run: |
+          set -euo pipefail
+          bash scripts/make-appimage.sh
+          ls -la dist/
+
+      - name: 验证 AppImage 真的能用
+        # 「构建成功」不等于「产物能用」。这里实际解包一次，
+        # 确认 layout 完整、二进制可执行、桌面文件合法。
+        run: |
+          set -euo pipefail
+          AI=$(ls dist/*.AppImage | head -1)
+          echo "验证 $AI"
+
+          rm -rf /tmp/aicheck && mkdir -p /tmp/aicheck && cd /tmp/aicheck
+          "$OLDPWD/$AI" --appimage-extract
+          test -x squashfs-root/AppRun || { echo "::error::AppRun 不可执行"; exit 1; }
+          test -x squashfs-root/usr/bin/appimage-manager || {
+            echo "::error::内嵌二进制不可执行"; exit 1; }
+          test -f squashfs-root/usr/share/appimage-manager/style.css || {
+            echo "::error::style.css 缺失（会渲染成无样式界面）"; exit 1; }
+          test -f squashfs-root/appimage-manager.desktop || {
+            echo "::error::.desktop 缺失"; exit 1; }
+          desktop-file-validate squashfs-root/appimage-manager.desktop \
+            || echo "::warning::内嵌 .desktop 未通过校验"
+
+      # ── 免 root 的 tar.gz ────────────────────────────────────────
+      #
+      # deb/rpm/arch 包都需要 root 才能装进系统目录，但很多人只想
+      # 解压了直接跑。这个包给那部分用户。
+      - name: 打 tar.gz
+        run: |
+          set -euo pipefail
+          V="${{ steps.ver.outputs.version }}"
+          STAGE="dist/appimage-manager-$V-linux-x86_64"
+          rm -rf "$STAGE"
+          # 前缀统一成 appimage-manager/，解包后不会把文件散在当前目录
+          make install DESTDIR="$STAGE" PREFIX=/usr >/dev/null
+          tar -czf "dist/appimage-manager-$V-linux-x86_64.tar.gz" \
+              -C "$STAGE" usr
+          echo "已附带运行说明"
+          cat > "dist/appimage-manager-$V-linux-x86_64/README.txt" <<EOF
+          AppImage Manager $V （免安装版）
+
+          解压后直接运行，不需要 root：
+
+              tar xzf appimage-manager-$V-linux-x86_64.tar.gz
+              ./appimage-manager-$V-linux-x86_64/usr/bin/appimage-manager
+
+          依赖：需要已安装 GTK3（桌面发行版基本都有）。
+          检查：ldd ./appimage-manager | grep 'not found'
+
+          想让它出现在应用菜单里：
+
+              install -Dm644 ./appimage-manager-$V-linux-x86_64/usr/share/applications/appimage-manager.desktop \\
+                ~/.local/share/applications/appimage-manager.desktop
+              install -Dm644 ./appimage-manager-$V-linux-x86_64/usr/share/icons/hicolor/256x256/apps/appimage-manager.png \\
+                ~/.local/share/icons/hicolor/256x256/apps/
+
+          这份 README 在 tar 包之外，需要从 Release 页面单独下载。
+          EOF
+          ls -la dist/
+
+      # ── deb / rpm / arch ────────────────────────────────────────
+      - name: 安装 nfpm
+        run: |
+          NFPM_URL=https://nfpm.goreleaser.com/static/nfpm-2.41.0_linux_amd64.tar.gz
+          curl -fsSL "$NFPM_URL" | tar -xz -C /tmp nfpm
+          /tmp/nfpm --version
+
+      - name: 打 deb / rpm / arch 包
+        working-directory: packaging
+        run: |
+          set -euo pipefail
+          V="${{ steps.ver.outputs.version }}"
+          OUT="${{ github.workspace }}/dist"
+
+          # .desktop 里有 @PREFIX@ 占位符要由 sed 替换，而 nfpm 不做替换。
+          # 所以必须先用 make install 把替换后的文件暂存到 build/pkg，
+          # nfpm.yaml 里那个 src 路径指的正是它。
+          make install DESTDIR=build/pkg PREFIX=/usr >/dev/null
+
+          # 注意是 archlinux 不是 arch —— nfpm 的 packager 名字如此，
+          # 写 arch 会直接报 "no packager registered for the format arch"
+          for f in deb rpm archlinux; do
+            echo "── $f ──"
+            /tmp/nfpm package --config nfpm.yaml \
+              --packager "$f" --target "$OUT"
+          done
+          ls -la "$OUT"
+
+      - name: 校验 deb 包结构与依赖
+        # 包能打出来不代表能用。这里实际解开看一眼：文件齐不齐、
+        # 依赖声明对不对。依赖名写错（比如 deb 上写成 rpm 的名字）
+        # 是这类打包最容易犯、也最难在事后发现的错。
+        run: |
+          set -euo pipefail
+          V="${{ steps.ver.outputs.version }}"
+          DEB=$(ls dist/*_${V}_amd64.deb 2>/dev/null | head -1 || ls dist/*.deb | head -1)
+          echo "检查 $DEB"
+          dpkg-deb --info "$DEB" | sed -n '1,20p'
+          echo "── Depends ──"
+          dpkg-deb -f "$DEB" Depends
+          echo "── 内容清单 ──"
+          dpkg-deb --contents "$DEB" | awk '{print $6}' | grep -v '/$'
+          rm -rf /tmp/debcheck && mkdir -p /tmp/debcheck
+          dpkg-deb -x "$DEB" /tmp/debcheck
+          test -x /tmp/debcheck/usr/bin/appimage-manager || {
+            echo "::error::deb 里没有可执行的二进制"; exit 1; }
+          test -f /tmp/debcheck/usr/share/appimage-manager/style.css || {
+            echo "::error::deb 里没有 style.css"; exit 1; }
+          test -f /tmp/debcheck/usr/share/applications/appimage-manager.desktop || {
+            echo "::error::deb 里没有 .desktop"; exit 1; }
+          # 二进制的动态库必须都能在 deb 的 Depends 里找到对应项
+          for lib in $(ldd /tmp/debcheck/usr/bin/appimage-manager \
+                       | awk '/=> \//{print $1}'); do
+            case "$lib" in
+              # 新版 Debian/Ubuntu（trixie 及以后）改用 t64 后缀的包名，
+              # 老版本仍是无后缀的。配置里写成 "A | B" 兼容两者，
+              # 所以这里任一命中即通过。
+              libgtk-3.so.0)      need='libgtk-3-0t64|libgtk-3-0' ;;
+              libglib-2.0.so.0)   need='libglib2.0-0t64|libglib2.0-0' ;;
+              libjson-glib-1.0.so.0) need=libjson-glib-1.0-0 ;;
+              *) need="" ;;
+            esac
+            [ -z "$need" ] && continue
+            # need 里可能是 "A|B"（新旧包名），任一命中即可
+            found=1
+            IFS='|' read -ra alts <<< "$need"
+            for alt in "${alts[@]}"; do
+              dpkg-deb -f "$DEB" Depends | grep -q "$alt" && { found=0; break; }
+            done
+            [ "$found" -eq 0 ] || {
+              echo "::error::deb Depends 缺 $need（$lib 需要它）"; exit 1; }
+          done
+          echo "deb 结构与依赖校验通过"
+
+      - name: 收集产物
+        id: artifacts
+        run: |
+          set -euo pipefail
+          cd dist
+          # README.txt 单独放 —— 它是给人看的说明，不属于可执行内容，
+          # 塞进 tar 包里反而会挡住 usr/ 前缀的干净结构
+          ls -1 *.AppImage *.tar.gz *.deb *.rpm *.pkg.tar.zst > /tmp/artifact_list
+          cat /tmp/artifact_list | sed 's/^/  /'
+          echo "count=$(wc -l < /tmp/artifact_list)" >> "$GITHUB_OUTPUT"
+
+      - name: 生成 Release 说明
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          {
+            echo "AppImage Manager $V"
+            echo
+            echo "扫描指定目录里的 AppImage，把它们变成规范的桌面启动器，"
+            echo "并持续维护这些启动器的健康状态。"
+            echo
+            echo "## 下载"
+            echo
+            echo "| 文件 | 适合谁 |"
+            echo "|---|---|"
+            echo "| \`AppImage-Manager-$V-x86_64.AppImage\` | 免安装，赋可执行权限后双击即用 |"
+            echo "| \`appimage-manager-$V-linux-x86_64.tar.gz\` | 想免安装又要能进应用菜单 |"
+            echo "| \`appimage-manager_$V_amd64.deb\` | Debian / Ubuntu / Kali / Mint |"
+            echo "| \`appimage-manager-$V-1.x86_64.rpm\` | Fedora / RHEL / openSUSE |"
+            echo "| \`appimage-manager-$V-1-x86_64.pkg.tar.zst\` | Arch / Manjaro |"
+            echo
+            echo "原生二进制与 AppImage 都**依赖系统的 GTK3**（桌面发行版基本都有）。"
+            echo "用 deb/rpm/arch 包时依赖会自动被声明并装好。"
+            echo
+            echo "## 校验"
+            echo
+            echo "每个包都对应源码 \`$GITHUB_SHA\`："
+            echo
+            echo '```'
+            echo "git clone $GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+            echo "cd $GITHUB_REPOSITORY && git checkout $GITHUB_SHA"
+            echo '```'
+            echo
+            echo "SHA256："
+            echo
+            echo '```'
+            cd dist && sha256sum *.AppImage *.tar.gz *.deb *.rpm *.pkg.tar.zst 2>/dev/null || true
+            echo '```'
+          } > "${{ github.workspace }}/RELEASE_NOTES.md"
+
+      - name: 发布到 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "v${{ steps.ver.outputs.version }}"
+          body_path: RELEASE_NOTES.md
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') }}
+          files: |
+            dist/*.AppImage
+            dist/*.tar.gz
+            dist/*.deb
+            dist/*.rpm
+            dist/*.pkg.tar.zst
+          fail_on_unmatched_files: true
