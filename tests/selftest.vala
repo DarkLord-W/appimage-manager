@@ -1061,6 +1061,101 @@ public int main (string[] args) {
                c4.has_prefix ("/"), "得到 \"" + c4 + "\"");
     }
 
+    /* ══ 19. 失效启动器的识别与列表可见性 ════════════════════════
+     *
+     * 「失效」过滤器曾经永远空白：detect_broken() 找出了条目，但只塞进
+     * broken_entries，一份都没进 entries —— 而列表和过滤器只看 entries。
+     * 这里钉死：失效条目必须真的出现在列表里，且过滤器能选中它。
+     * ══════════════════════════════════════════════════════════════ */
+    stdout.printf ("\n── 19. 失效启动器的识别 ──────────────────\n");
+
+    if (sandboxed) {
+        AppPath.ensure_dir (apps_out);
+
+        // 指向不存在 AppImage 的受管启动器
+        string gone = GLib.Path.build_filename (apps_out, "gone-test.desktop");
+        GLib.FileUtils.set_contents (gone,
+            "# 保留的注释\n"
+            + "[Desktop Entry]\n"
+            + "Type=Application\n"
+            + "Name=已经消失的应用\n"
+            + "Exec=\"/tmp/appmgr-nonexistent/Nowhere.AppImage\" %U\n"
+            + "X-AppImage-Manager=true\n"
+            + "X-AppImage-Manager-Path=/tmp/appmgr-nonexistent/Nowhere.AppImage\n");
+
+        // 全大写扩展名，且没有标记键 —— 靠扩展名识别
+        string upper = GLib.Path.build_filename (apps_out, "gone-upper.desktop");
+        GLib.FileUtils.set_contents (upper,
+            "[Desktop Entry]\n"
+            + "Type=Application\n"
+            + "Name=大写扩展名\n"
+            + "Exec=/tmp/appmgr-nonexistent/UPPER.APPIMAGE %U\n");
+
+        var st19 = new Store (new AppConfig ());
+        st19.rescan ();
+
+        AppEntry? b1 = null;
+        AppEntry? b2 = null;
+        foreach (var e in st19.entries) {
+            if (e.basename == "Nowhere.AppImage")
+                b1 = e;
+            if (e.basename == "UPPER.APPIMAGE")
+                b2 = e;
+        }
+
+        check (ref checks, ref failures, "失效的启动器进入了列表（不再是空白）",
+               b1 != null, "列表里找不到 Nowhere.AppImage");
+        if (b1 != null) {
+            check (ref checks, ref failures, "它的匹配状态是 BROKEN",
+                   b1.match == MatchState.BROKEN,
+                   "match=%d".printf ((int) b1.match));
+            check (ref checks, ref failures, "「失效」过滤器能选中它",
+                   Store.matches_filter (b1, 4, ""), "过滤器 4 返回 false");
+            check (ref checks, ref failures, "展示名优先用 .desktop 里的 Name",
+                   b1.get_best_name () == "已经消失的应用",
+                   "得到 \"" + b1.get_best_name () + "\"");
+            check (ref checks, ref failures, "它不应被其他过滤器误选",
+                   !Store.matches_filter (b1, 1, "")
+                   && !Store.matches_filter (b1, 2, "")
+                   && !Store.matches_filter (b1, 3, ""), "");
+        }
+
+        check (ref checks, ref failures, "大写扩展名 .APPIMAGE 也能识别为失效",
+               b2 != null, "大小写敏感的判断漏掉了它");
+        if (b2 != null)
+            check (ref checks, ref failures, "大写那条的过滤器也正确",
+                   Store.matches_filter (b2, 4, ""), "");
+
+        check (ref checks, ref failures, "broken_entries 同时记录了它们",
+               st19.broken_entries.length >= 2,
+               "只有 %d 条".printf (st19.broken_entries.length));
+
+        // 目标存在的启动器不能被误判为失效。
+        // 只在夹具确实存在时才测，免得夹具缺失导致假失败。
+        string alive = GLib.Path.build_filename (apps_out, "alive-test.desktop");
+        string real_app = GLib.Path.build_filename (apps_dir, "Krita-5.2.0-x86_64.AppImage");
+        if (AppPath.exists (real_app))
+        GLib.FileUtils.set_contents (alive,
+            "[Desktop Entry]\n"
+            + "Type=Application\n"
+            + "Name=还活着的\n"
+            + "Exec=\"" + real_app + "\" %U\n");
+
+        var st19b = new Store (new AppConfig ());
+        st19b.rescan ();
+        bool alive_broken = false;
+        foreach (var e in st19b.entries)
+            if (e.basename == "alive-test.desktop")
+                alive_broken = true;
+        check (ref checks, ref failures, "目标存在的启动器不被误判为失效",
+               !alive_broken, "被当成失效了");
+
+        // 清理，别影响别的用例
+        GLib.FileUtils.remove (gone);
+        GLib.FileUtils.remove (upper);
+        GLib.FileUtils.remove (alive);
+    }
+
     /* ══ 汇总 ════════════════════════════════════════════════════ */
     stdout.printf ("\n═══════════════════════════════════════════\n");
     if (failures == 0) {
