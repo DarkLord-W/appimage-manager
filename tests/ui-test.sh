@@ -297,12 +297,38 @@ chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null
 # verified by its effect (a dialog opens / the file on disk changes).
 
 COMBO_X=54;  COMBO_Y=134            # filter combo
-BTN_Y=133                           # action-bar row (创建/修复/认领/图标/删除)
-BTN_CREATE_X=670
-BTN_REPAIR_X=760
-BTN_CLAIM_X=850
-BTN_ICON_X=940
-BTN_DELETE_X=1030
+BTN_Y=134                           # action-bar row (创建/修复/认领/图标/删除)
+
+# 操作条按钮是**右对齐**的，所以按「距右边缘的偏移」推算，不写死绝对值。
+#
+# 写死会怎样：把按钮标签从 emoji（「⚡ 创建」）换成主题图标 + 文字之后，
+# 按钮变窄、整排右移，最左边的「创建」挪了 98px 而最右边的「删除」几乎没动。
+# 于是仍按老坐标点 760，正好落在「创建」上 —— 表现是
+# 「点『修复』却弹出创建对话框」，看起来像功能坏了，其实是标定过期。
+#
+# 偏移量是在 1080x680 下逐列扫描按钮边框量出来的，五个按钮各宽 58px、
+# 等距 68px。真改了按钮数量或文案，这几个数要重量。
+BTN_OFF_CREATE=312
+BTN_OFF_REPAIR=244
+BTN_OFF_CLAIM=176
+BTN_OFF_ICON=108
+BTN_OFF_DELETE=40
+BTN_CREATE_X=768
+BTN_REPAIR_X=836
+BTN_CLAIM_X=904
+BTN_ICON_X=972
+BTN_DELETE_X=1040
+
+# refresh_geometry 之后调用，按实际窗口宽度重算这五个坐标
+calibrate_action_bar() {
+    local w="${WIN_W:-0}"
+    [ "$w" -ge 400 ] || w=1080     # 几何没取到时退回标定宽度
+    BTN_CREATE_X=$((w - BTN_OFF_CREATE))
+    BTN_REPAIR_X=$((w - BTN_OFF_REPAIR))
+    BTN_CLAIM_X=$((w - BTN_OFF_CLAIM))
+    BTN_ICON_X=$((w - BTN_OFF_ICON))
+    BTN_DELETE_X=$((w - BTN_OFF_DELETE))
+}
 LIST_ROW1_X=300; LIST_ROW1_Y=209    # first list row centre
 EMPTY_COMMON_X=595; EMPTY_COMMON_Y=509   # empty-state "看看常见位置" button
 
@@ -467,7 +493,10 @@ refresh_geometry() { # sets WIN_X/WIN_Y/WIN_W/WIN_H from MAIN_WIN
     eval "$out"
     WIN_X="${X:-0}"; WIN_Y="${Y:-0}"
     WIN_W="${WIDTH:-0}"; WIN_H="${HEIGHT:-0}"
-    [ "$WIN_W" -gt 0 ] && [ "$WIN_H" -gt 0 ]
+    [ "$WIN_W" -gt 0 ] && [ "$WIN_H" -gt 0 ] || return 1
+    # 按钮坐标跟着窗口宽度走 —— 测试可能改窗口尺寸
+    calibrate_action_bar
+    return 0
 }
 
 dismiss_startup_dialogs() { # crash-recovery prompt if a stale journal exists
