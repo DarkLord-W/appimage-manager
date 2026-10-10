@@ -279,7 +279,7 @@ sudo apt install desktop-file-utils xvfb xfwm4 xdotool imagemagick xclip
 
 ```bash
 make selftest        # 253 项引擎自测，不依赖图形环境
-tests/ui-test.sh     # 20 步界面自动化 + 全按钮点击稳定性检查，需要上面那套工具
+tests/ui-test.sh     # 21 步界面自动化 + 全按钮点击稳定性检查，需要上面那套工具
 ```
 
 CI 上也是跑这两条 —— 缺工具时 `ui-test.sh` 会跳过并退 0，所以本地

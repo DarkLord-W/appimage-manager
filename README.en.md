@@ -327,7 +327,7 @@ sudo apt install desktop-file-utils xvfb xfwm4 xdotool imagemagick xclip
 
 ```bash
 make selftest        # 253 engine self-tests, no graphical environment needed
-tests/ui-test.sh     # 20 UI automation steps + a click-stability sweep over every button
+tests/ui-test.sh     # 21 UI automation steps + a click-stability sweep over every button
 ```
 
 CI runs exactly these two. When a tool is missing, `ui-test.sh` skips and exits
