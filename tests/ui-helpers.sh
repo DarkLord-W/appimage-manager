@@ -264,7 +264,16 @@ count_bands_in() { # count_bands_in <img> <threshold> — merged text bands
 }
 
 count_popup_bands() { # count_popup_bands <popup-shot> — menu/number of rows
-    count_bands_in "$1" 55%
+    # 阈値 45% 而不是 55%。
+    #
+    # 55% 在菜单栏那六个菜单上是对的，但上下文菜单里「创建启动器」
+    # 「修复问题…」在被管理的条目上是**禁用态**（灰字），亮度落在
+    # 55% 之下 —— 8 项只数出 6 项，报成「菜单只有 6 项」，
+    # 看着像功能缺了两项。
+    #
+    # 45% 是实测出来的下界：把六张菜单截图和上下文菜单截图都拿来复算，
+    # 45%/50% 全部数对，40% 会把「文件」菜单少数一项（分隔线与首项粘连）。
+    count_bands_in "$1" 45%
 }
 
 count_list_rows() { # count_list_rows <main-window-shot>

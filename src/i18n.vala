@@ -1272,6 +1272,12 @@ public class I18n : GLib.Object {
         "Cannot read this image: %s",
         "主题图标：%s",
         "Theme icon: %s",
+        "已被管理",
+        "Already managed",
+        "「%s」已经在本工具管理之下，无需重复认领。\n\n",
+        "\"%s\" is already managed by this tool; there is no need to claim it again.\n\n",
+        "文件没有被改动。",
+        "The file was not modified.",
 };
         return lazy_table;
     }

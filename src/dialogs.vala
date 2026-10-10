@@ -2064,6 +2064,20 @@ namespace Dialogs {
         if (d.exec_target != matched.path)
             d.exec_target = matched.path;
 
+        // 已经在管理之下的文件：明确说一声，别让用户以为点了没反应。
+        //
+        // 认领本身是幂等的（claim_entry 会原样返回、文件一个字节不动），
+        // 但「幂等」和「有反馈」是两回事 —— 之前这里是静默 return，
+        // 用户挑了一个已经认领过的文件，界面上什么都不会发生。
+        if (d.is_managed) {
+            info (parent, I18n.s ("已被管理"),
+                I18n.s ("「%s」已经在本工具管理之下，无需重复认领。\n\n")
+                .printf (d.basename)
+                + I18n.s ("文件没有被改动。"),
+                Gtk.MessageType.INFO);
+            return;
+        }
+
         var res = claim_entry (parent, matched, d, cfg);
 
         if (in_place && res != null) {

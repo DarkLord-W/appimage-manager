@@ -983,7 +983,10 @@ step_dialogs() {
 
     # 关于（帮助第 2 项）
     menu_pick "alt+h" 1
-    dlg_check '^About AppImage Manager$' '关于' '09_dialog_about.png'
+    # GtkAboutDialog 的标题来自 GTK 自己的 gettext 域，中英文各一个写法。
+    # 本工具现在会在 GTK 初始化前设好 locale，所以中文界面下这个标题
+    # 就是「关于 AppImage Manager」—— 只认英文会误报「对话框没打开」。
+    dlg_check '^(About AppImage Manager|关于 AppImage Manager)$' '关于' '09_dialog_about.png'
     r_about="$DLG_RESULT"
 
     # 添加扫描目录（文件第 1 项）— cancel the chooser. A cold HOME can make
