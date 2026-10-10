@@ -1356,6 +1356,157 @@ public int main (string[] args) {
         GLib.FileUtils.remove (f6);
     }
 
+    /* ══ 21. 预填与扫描 ═════════════════════════════════════════
+     *
+     * Prefill 与 Scanner 此前同样接近零覆盖。两者都是「猜」的环节：
+     * 从文件名猜应用名、从应用名猜分类、从目录猜有哪些 AppImage。
+     * 猜错不会崩，但会静默产出错的启动器 —— 所以每条猜测规则都该有断言。
+     * ══════════════════════════════════════════════════════════════ */
+    stdout.printf ("\n── 21. 预填与扫描 ────────────────────────\n");
+
+    // ── 分类猜测 ──
+    check (ref checks, ref failures, "图形类应用名 → Graphics",
+           Prefill.suggest_category ("krita-5.2.0").has_prefix ("Graphics"),
+           Prefill.suggest_category ("krita-5.2.0"));
+    check (ref checks, ref failures, "开发类应用名 → Development",
+           Prefill.suggest_category ("vscode").has_prefix ("Development"),
+           Prefill.suggest_category ("vscode"));
+    check (ref checks, ref failures, "影音类应用名 → AudioVideo",
+           Prefill.suggest_category ("vlc-player").has_prefix ("AudioVideo"),
+           Prefill.suggest_category ("vlc-player"));
+    check (ref checks, ref failures, "游戏类应用名 → Game",
+           Prefill.suggest_category ("steam").has_prefix ("Game"),
+           Prefill.suggest_category ("steam"));
+    check (ref checks, ref failures, "浏览器类应用名 → Network",
+           Prefill.suggest_category ("firefox").has_prefix ("Network"),
+           Prefill.suggest_category ("firefox"));
+
+    // 认不出来时必须给出合法兜底，不能是空串 —— 空串会写进 .desktop
+    string fallback_cat = Prefill.suggest_category ("zzz完全不存在的东西qqq");
+    check (ref checks, ref failures, "认不出的应用名有合法兜底分类",
+           fallback_cat != "" && fallback_cat.has_suffix (";"),
+           "得到 \"%s\"".printf (fallback_cat));
+
+    // 大小写不敏感
+    check (ref checks, ref failures, "分类猜测大小写不敏感",
+           Prefill.suggest_category ("KRITA") == Prefill.suggest_category ("krita"),
+           "%s vs %s".printf (Prefill.suggest_category ("KRITA"),
+                              Prefill.suggest_category ("krita")));
+
+    // ── 文件名 → slug ──
+    string[] taken0 = {};
+    check (ref checks, ref failures, "slug 去掉已知扩展名并小写化",
+           Prefill.ensure_unique_slug ("/x/Obsidian-1.5.3-x86_64.AppImage", taken0)
+               == "obsidian-1.5.3-x86_64.desktop",
+           Prefill.ensure_unique_slug ("/x/Obsidian-1.5.3-x86_64.AppImage", taken0));
+
+    // 撞名时加序号
+    string[] taken1 = { "krita.desktop", "krita-2.desktop" };
+    check (ref checks, ref failures, "撞名时递增后缀",
+           Prefill.ensure_unique_slug ("/x/krita.AppImage", taken1) == "krita-3.desktop",
+           Prefill.ensure_unique_slug ("/x/krita.AppImage", taken1));
+
+    // 判重必须不区分大小写。
+    //
+    // 为什么这不是吹毛求疵：desktop entry 的文件名在 freedesktop 规范里
+    // 是大小写敏感的，但实际部署里启动器目录可能落在大小写不敏感的文件
+    // 系统上（NTFS/exFAT 的挂载、macOS 的共享、Samba 共享）。那时候
+    // Krita.DESKTOP 和 krita.desktop 是同一个文件，判重漏掉就会直接
+    // 覆盖掉用户已有的启动器 —— 而这是不可逆的（顶多能从历史里还原，
+    // 但用户不会知道自己丢了东西）。
+    string[] taken2 = { "KRITA.DESKTOP" };
+    string uniq2 = Prefill.ensure_unique_slug ("/x/krita.AppImage", taken2);
+    check (ref checks, ref failures, "判重不区分大小写（防大小写不敏感文件系统上覆盖）",
+           uniq2 != "krita.desktop",
+           "得到 " + uniq2 + "，会覆盖已存在的 KRITA.DESKTOP");
+
+    // ── 生成内容的基本正确性 ──
+    var pf = new Prefill.Fields ();
+    pf.name = "Foo & Bar";
+    pf.exec_line = "\"/x/foo bar.AppImage\" %U";
+    pf.categories = "Graphics;";
+    pf.comment = "带 % 和 & 的注释";
+    string content = Prefill.build_preview (pf, "/x/foo bar.AppImage", true);
+
+    check (ref checks, ref failures, "生成内容以 [Desktop Entry] 开头",
+           content.has_prefix ("[Desktop Entry]\n"), "");
+    check (ref checks, ref failures, "生成内容包含转义后的 Exec",
+           content.contains ("\"/x/foo bar.AppImage\" %U"),
+           "Exec 没被正确转义");
+    check (ref checks, ref failures, "生成内容能通过 desktop-file-validate",
+           DesktopFiles.validate_content (content) == "",
+           DesktopFiles.validate_content (content));
+
+    // Exec 是 desktop 规范里唯一必须把 % 写成 %% 的字段类型（string）。
+    // Name / Comment 属于 localestring，规范不要求转义 % 或 & ——
+    // 我先前误以为要转义，用 desktop-file-validate 验证后确认是错的。
+    check (ref checks, ref failures, "Exec 里的 % 按规范转义成 %%",
+           DesktopFiles.build_exec_arg ("/x/100% Pure.AppImage").contains ("100%%"),
+           DesktopFiles.build_exec_arg ("/x/100% Pure.AppImage"));
+    check (ref checks, ref failures, "Exec 里的引号被转义",
+           DesktopFiles.build_exec_arg ("/x/a\"b.AppImage").contains ("\\\""),
+           DesktopFiles.build_exec_arg ("/x/a\"b.AppImage"));
+    check (ref checks, ref failures, "Exec 里的反斜杠被转义",
+           DesktopFiles.build_exec_arg ("/x/a\\b.AppImage").contains ("\\\\"),
+           DesktopFiles.build_exec_arg ("/x/a\\b.AppImage"));
+    check (ref checks, ref failures, "Exec 参数带空格时被引起来",
+           DesktopFiles.build_exec_arg ("/x/foo bar.AppImage").has_prefix ("\""),
+           DesktopFiles.build_exec_arg ("/x/foo bar.AppImage"));
+
+    // 关掉标记键
+    var pf2 = new Prefill.Fields ();
+    pf2.name = "NoMarker";
+    pf2.exec_line = "/x/nomarker.AppImage %U";
+    string no_marker = Prefill.build_preview (pf2, "/x/nomarker.AppImage", false);
+    check (ref checks, ref failures, "关掉标记后不写 X-AppImage-Manager",
+           !no_marker.contains (DesktopFiles.MARKER_BOOL),
+           "标记键仍在");
+    string with_marker = Prefill.build_preview (pf2, "/x/nomarker.AppImage", true);
+    check (ref checks, ref failures, "打开标记后写入 X-AppImage-Manager",
+           with_marker.contains (DesktopFiles.MARKER_BOOL), "");
+
+    // ── 扩展名判定 ──
+        check (ref checks, ref failures, "识别 .AppImage",
+           Scanner.has_appimage_extension ("Foo.AppImage"), "");
+    check (ref checks, ref failures, "识别 .appimage（小写）",
+           Scanner.has_appimage_extension ("Foo.appimage"), "");
+    check (ref checks, ref failures, "识别 .APPIMAGE（全大写）",
+           Scanner.has_appimage_extension ("Foo.APPIMAGE"), "");
+    check (ref checks, ref failures, "识别 .appimage.zsync",
+           Scanner.has_appimage_extension ("Foo.appimage.zsync"), "");
+    check (ref checks, ref failures, "拒绝普通文件",
+           !Scanner.has_appimage_extension ("notes.txt"), "");
+    check (ref checks, ref failures, "拒绝 .AppImage 在中间（foo.AppImage.bak）",
+           !Scanner.has_appimage_extension ("foo.AppImage.bak"),
+           "扩展名判断过于宽松");
+
+    // ── 扫描：不存在的目录不能崩 ──
+        var r0 = Scanner.scan ({ "/绝对不存在的目录/appimages" }, true);
+    check (ref checks, ref failures, "扫描不存在的目录不崩",
+           r0.found.length == 0, "found=%d".printf (r0.found.length));
+
+    if (sandboxed) {
+        // 扫真实夹具：递归 + 非递归应当都能找到那些 AppImage
+        string apps = GLib.Path.build_filename (sandbox, "apps");
+        if (AppPath.is_dir (apps)) {
+            var sc_rec = Scanner.scan ({ apps }, true);
+            check (ref checks, ref failures, "递归扫描能发现夹具里的 AppImage",
+                   sc_rec.found.length > 0, "找到 %d 个".printf (sc_rec.found.length));
+            check (ref checks, ref failures, "扫描统计到目录数",
+                   sc_rec.scanned_dirs >= 1, "scanned_dirs=%d".printf (sc_rec.scanned_dirs));
+
+            var sc_flat = Scanner.scan ({ apps }, false);
+            check (ref checks, ref failures, "非递归扫描的结果不多于递归",
+                   sc_flat.found.length <= sc_rec.found.length,
+                   "递归 %d vs 非递归 %d".printf (sc_rec.found.length, sc_flat.found.length));
+            // 顶层至少有那 11 个，subdir/ 下的两个只在递归时可见
+            check (ref checks, ref failures, "递归比非递归多扫到子目录里的",
+                   sc_rec.found.length > sc_flat.found.length,
+                   "递归 %d vs 非递归 %d（若相等说明 subdir 没被递归扫到）"
+                   .printf (sc_rec.found.length, sc_flat.found.length));
+        }
+    }
+
     /* ══ 汇总 ════════════════════════════════════════════════════ */
     stdout.printf ("\n═══════════════════════════════════════════\n");
     if (failures == 0) {

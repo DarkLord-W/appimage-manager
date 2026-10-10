@@ -210,11 +210,21 @@ namespace Prefill {
         return "%s-%s.desktop".printf (slug, digest);
     }
 
+    /**
+     * 判重必须大小写不敏感。
+     *
+     * desktop entry 的文件名在 freedesktop 规范里是大小写敏感的，但启动器
+     * 目录未必落在大小写敏感的文件系统上 —— NTFS/exFAT 挂载、macOS 共享、
+     * Samba 共享下 KRITA.DESKTOP 和 krita.desktop 就是同一个文件。大小写
+     * 敏感地判重会漏判，然后 write_atomic 直接把用户已有的启动器覆盖掉，
+     * 而那是不可逆的破坏。所以宁可多算一次撞名，也绝不覆盖。
+     */
     private static bool basename_taken (string[] taken, string candidate) {
         if (taken == null)
             return false;
+        string c = candidate.down ();
         foreach (string t in taken) {
-            if (t == candidate)
+            if (t.down () == c)
                 return true;
         }
         return false;
