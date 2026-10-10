@@ -411,6 +411,41 @@ namespace DesktopFiles {
         }
     }
 
+    /* ── 图标回收 ──────────────────────────────────────────────────── */
+
+    /**
+     * 删除不再被任何启动器引用的图标 —— 但只删本工具自己缓存目录里的。
+     *
+     * 放在引擎层而不是 dialogs.vala：批量删除走 repair.vala，而 repair.vala
+     * 属于自测构建的输入，不能依赖 GUI 文件。
+     *
+     * 绝不能只凭「路径以 / 开头」就删：用户完全可能把图标放在 ~/Pictures
+     * 或项目目录里，删掉就是在动用户的文件。所以这里以解析后的真实路径判断
+     * 包含关系，缓存目录之外的图标一律不动 —— 宁可留着垃圾，也不越界。
+     *
+     * @return true 表示确实删掉了文件；false 表示没删（不存在 / 在缓存目录外 /
+     *         仍被引用），调用方无需据此报错
+     */
+    public static bool remove_if_unreferenced (string icon_path) {
+        if (icon_path == "" || !AppPath.exists (icon_path))
+            return false;
+
+        // 先算缓存目录的真实路径 —— 图标路径本身也可能经由软链接绕进来，
+        // 不解析就可能用字符串前缀判断出一个假的「在目录内」。
+        string cache_root = AppPath.canonical (AppPath.icons_hicolor_dir ());
+        string target = AppPath.canonical (icon_path);
+        if (!target.has_prefix (cache_root + "/"))
+            return false;
+
+        // 还有启动器在用就别动
+        foreach (var d in scan_directory (AppPath.applications_dir ()))
+            if (d.icon != null && AppPath.canonical (d.icon) == target)
+                return false;
+
+        AppPath.file_remove (target);
+        return true;
+    }
+
     /* ── 删除 ────────────────────────────────────────────────────── */
 
     public static bool delete (string path, out string? error) {

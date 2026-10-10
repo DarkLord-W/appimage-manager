@@ -1049,6 +1049,21 @@ namespace Repair {
         tx.write_journal ();
         tx.commit ();
 
+        // 「删除启动器时同时删图标」—— 删完启动器，那个图标就没人引用了。
+        //
+        // 必须在删除之后做：remove_if_unreferenced 会扫描所有还存在的启动器
+        // 确认没人再引用它。删之前扫，这个图标当然还被正在删的那份引用着，
+        // 于是永远删不掉。
+        //
+        // 这里只回收本工具自己缓存目录里、且确实无人引用的图标；用户放在
+        // 别处的图标一律不动。批量删除原先根本没接这个设置，于是「删除启动器
+        // 时同时删图标」在批量场景下形同虚设（只在编辑对话框里生效）。
+        if (cfg.delete_icon_with_launcher ()) {
+            foreach (var a in apps)
+                if (a.entry != null && a.entry.icon != null)
+                    DesktopFiles.remove_if_unreferenced (a.entry.icon);
+        }
+
         DesktopFiles.refresh_menu (cfg.should_update_database ());
         DesktopFiles.refresh_icon_cache (cfg.should_update_icon_cache ());
 

@@ -81,14 +81,50 @@ namespace Dialogs {
         d.destroy ();
     }
 
-    private bool confirm (Gtk.Window? parent, string title, string msg) {
+    /**
+     * 简单确认框。
+     *
+     * destructive 为 true（默认）时，默认按钮是「取消」。
+     * 本函数当前只会被删除启动器 / 清理备份这类破坏性操作使用 —— 在对话框里
+     * 直接按 Enter 绝不能执行删除。将来若有真正无破坏性的确认，再显式传
+     * false 把「确定」放回默认位置。
+     */
+    private bool confirm (Gtk.Window? parent, string title, string msg,
+                          bool destructive = true) {
         var d = new Gtk.MessageDialog (parent, Gtk.DialogFlags.MODAL,
             Gtk.MessageType.QUESTION, Gtk.ButtonsType.OK_CANCEL, "%s", msg);
         d.title = title;
-        d.set_default_response (Gtk.ResponseType.OK);
+        d.set_default_response (destructive
+            ? Gtk.ResponseType.CANCEL : Gtk.ResponseType.OK);
         int r = d.run ();
         d.destroy ();
         return r == Gtk.ResponseType.OK;
+    }
+
+    /**
+     * 用给定的 Exec 行替换内容里的 Exec= 行。
+     *
+     * 行结构（包括末尾换行）严格保持原样，只动那一行；找不到 Exec= 时原样
+     * 返回。给「编辑启动器」用：让预览与实际写入都采用用户输入的 Exec。
+     */
+    private string with_exec_line (string content, string exec_line) {
+        if (exec_line == "")
+            return content;
+
+        var sb = new GLib.StringBuilder ();
+        string[] lines = content.split ("\n");
+        bool replaced = false;
+        for (int i = 0; i < lines.length; i++) {
+            if (i > 0)
+                sb.append_c ('\n');
+            if (!replaced && lines[i].has_prefix ("Exec=")) {
+                sb.append ("Exec=").append (exec_line);
+                replaced = true;
+            } else {
+                sb.append (lines[i]);
+            }
+        }
+        return sb.str;
     }
 
     /* ══════════════════════════════════════════════════════════════
@@ -247,6 +283,12 @@ namespace Dialogs {
         var f_exec = new Gtk.Entry ();
         f_exec.set_text (decision.fields.exec_line);
         f_exec.get_style_context ().add_class ("cell-mono");
+        // 创建流程最终由 window.vala 调 Prefill.build_preview () 落盘，而它固定
+        // 按 AppImage 路径派生 Exec=，不会读这里输入的内容。既然如此就不能让
+        // 这个框假装可编辑 —— 用户改了半天，写进文件的仍是派生值。
+        f_exec.set_editable (false);
+        f_exec.set_tooltip_text ("Exec 由上面的 AppImage 路径自动生成，不可编辑；"
+                                 + "实际写入的内容与下方预览一致。");
 
         var f_icon = new Gtk.Entry ();
         f_icon.set_editable (false);
@@ -295,7 +337,13 @@ namespace Dialogs {
         grid.attach (mk_label ("名称"), 0, row, 1, 1);
         grid.attach (f_name, 1, row++, 1, 1);
         grid.attach (mk_label ("命令"), 0, row, 1, 1);
-        grid.attach (f_exec, 1, row++, 1, 1);
+        var exec_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 2);
+        exec_box.pack_start (f_exec, false, false, 0);
+        var exec_note = new Gtk.Label ("Exec 由上面的 AppImage 路径自动生成");
+        exec_note.xalign = 0.0f;
+        exec_note.get_style_context ().add_class ("dim-label");
+        exec_box.pack_start (exec_note, false, false, 0);
+        grid.attach (exec_box, 1, row++, 1, 1);
         grid.attach (mk_label ("图标"), 0, row, 1, 1);
         grid.attach (f_icon, 1, row++, 1, 1);
         grid.attach (mk_label ("分类"), 0, row, 1, 1);
@@ -353,7 +401,9 @@ namespace Dialogs {
 
         void refresh_preview () {
             decision.fields.name = f_name.text.strip ();
-            decision.fields.exec_line = f_exec.text.strip ();
+            // exec_line 不取自界面：写入时 Prefill.build_preview () 永远按
+            // AppImage 路径派生 Exec，保持 from_appimage () 的派生值才能与
+            // 实际落盘内容一致（输入框本身已设为只读）。
             decision.fields.icon = current_icon;
             decision.fields.categories = cat_entry.text.strip ();
             decision.fields.comment = f_comment.text.strip ();
@@ -595,9 +645,13 @@ namespace Dialogs {
         var frame = mk_frame ("将写入 " + AppPath.shorten (prev_path), mk_scrolled (prev, 220), 220);
         content.pack_start (frame, true, true, 0);
 
-        // 生成内容：沿用 DesktopFiles.build_content，保证「所见即所写」
+        // 生成内容：沿用 DesktopFiles.build_content，保证「所见即所写」。
+        //
+        // Exec 是唯一例外：build_content 固定按 AppImage 路径派生 Exec=，
+        // 而本对话框自己负责写入文件，所以这里把用户输入（或原文件里的）
+        // Exec 行替换回去。留空则回退到派生值。
         string build_preview () {
-            return DesktopFiles.build_content (
+            string generated = DesktopFiles.build_content (
                 entry.path,
                 f_name.text.strip (),
                 de.generic_name,
@@ -608,6 +662,7 @@ namespace Dialogs {
                 entry.mimetype,
                 cfg.write_marker (),
                 "%U");
+            return with_exec_line (generated, f_exec.text.strip ());
         }
 
         void refresh () {
@@ -621,6 +676,7 @@ namespace Dialogs {
 
         f_name.changed.connect (() => { refresh (); });
         f_cat.changed.connect (() => { refresh (); });
+        f_exec.changed.connect (() => { refresh (); });
         f_icon.changed.connect (() => { refresh (); });
         f_comment.changed.connect (() => { refresh (); });
         f_term.toggled.connect (() => { refresh (); });
@@ -656,6 +712,10 @@ namespace Dialogs {
                     info (parent, "删除失败", derr ?? "未知错误", Gtk.MessageType.ERROR);
                     return null;
                 }
+                // 「删除启动器时同时删图标」—— 只删本工具图标缓存目录里、
+                // 且不再被任何启动器引用的图标，用户放在别处的图标绝不碰。
+                if (cfg.delete_icon_with_launcher () && de.icon != "")
+                    remove_if_unreferenced (de.icon);
                 DesktopFiles.refresh_menu (cfg.should_update_database ());
                 return de.file_path;
             }
@@ -1063,9 +1123,22 @@ namespace Dialogs {
             return null;
         }
 
+        // 这个复选框对本轮是否运行 update-desktop-database 有最终决定权：
+        // 全局设置只决定它的初始勾选状态（之前 `auto_db.active ||
+        // cfg.should_update_database ()` 的写法让取消勾选形同虚设）。
+        //
+        // Repair.execute () 内部也会按全局设置自己刷一次数据库，所以执行
+        // 期间临时把全局值调成本对话框的选择，执行完立即还原（不落盘）。
+        bool saved_udb = cfg.should_update_database ();
+        bool want_db = auto_db.active;
+        if (saved_udb != want_db)
+            cfg.set_bool ("sync", "update_desktop_database", want_db);
+
         var result = Repair.execute (new RepairPlan[] { plan }, cfg);
 
-        bool want_db = auto_db.active || cfg.should_update_database ();
+        if (saved_udb != want_db)
+            cfg.set_bool ("sync", "update_desktop_database", saved_udb);
+
         DesktopFiles.refresh_menu (want_db);
 
         dlg.destroy ();
@@ -1299,12 +1372,33 @@ namespace Dialogs {
         outer.add (flow);
         content.pack_start (outer, true, true, 0);
 
-        // 顶部摘要
+        // 顶部摘要 + 两类项目的区别（默认勾选策略不同，必须说清楚）
         var sum = new Gtk.Label (null);
         sum.use_markup = true;
         sum.xalign = 0.0f;
-        sum.label = "失效启动器 <b>%d</b> 个 · 孤立 AppImage <b>%d</b> 个".printf (n_broken, n_orphan);
+        sum.set_line_wrap (true);
+        sum.label = "失效启动器 <b>%d</b> 个 · 无启动器的 AppImage <b>%d</b> 个".printf (n_broken, n_orphan);
         flow.pack_start (sum, false, false, 0);
+
+        var explain = mk_label (
+            "「孤立 AppImage」只表示没有启动器指向它，并不等于垃圾文件。\n"
+            + "· 失效启动器：只删除对应的 .desktop 条目，不会碰 AppImage 本体。\n"
+            + "· 孤立 AppImage：勾选并清理会把磁盘上的 AppImage 文件一并删除，"
+            + "且无法由本工具恢复 —— 所以默认不勾选。");
+        explain.get_style_context ().add_class ("dim-label");
+        explain.set_line_wrap (true);
+        flow.pack_start (explain, false, false, 0);
+
+        // 勾选了会删 AppImage 的行时，显式亮出「删什么、合计多大」。
+        // 放在顶部而不是列表末尾：长列表要滚到底才能看见的警告等于没有警告。
+        var warn_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 2);
+        warn_box.get_style_context ().add_class ("hint-box");
+        var warn_lab = new Gtk.Label (null);
+        warn_lab.use_markup = true;
+        warn_lab.xalign = 0.0f;
+        warn_lab.set_line_wrap (true);
+        warn_box.pack_start (warn_lab, false, false, 0);
+        flow.pack_start (warn_box, false, false, 0);
 
         Gtk.CheckButton[] all_checks = new Gtk.CheckButton[targets.length];
 
@@ -1319,6 +1413,13 @@ namespace Dialogs {
             h.label = "<b>%s</b>".printf (head);
             flow.pack_start (h, false, false, 0);
 
+            var sub = mk_label (is_launcher
+                ? "删除这些 .desktop 条目不会影响任何 AppImage 文件，默认勾选。"
+                : "这些文件将从磁盘删除、无法恢复，默认不勾选；请逐项确认。");
+            sub.get_style_context ().add_class ("dim-label");
+            sub.set_line_wrap (true);
+            flow.pack_start (sub, false, false, 0);
+
             bool any = false;
             var box = new Gtk.Box (Gtk.Orientation.VERTICAL, 4);
             for (int i = section_start; i < targets.length; i++) {
@@ -1329,7 +1430,8 @@ namespace Dialogs {
 
                 var row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8);
                 var cb = new Gtk.CheckButton ();
-                cb.active = true;
+                // 会删 AppImage 文件的行绝不预先勾选；删 .desktop 的行可以。
+                cb.active = is_launcher;
                 all_checks[i] = cb;
                 row.pack_start (cb, false, false, 0);
 
@@ -1344,13 +1446,20 @@ namespace Dialogs {
                     detail = "Exec 目标：%s   ✗ 文件已不存在".printf (
                         ex != "" ? ex : "（未知）");
                 } else {
-                    detail = "%s · %s   ✗ 没有对应的启动器".printf (
+                    detail = "磁盘文件：%s · 大小 %s · 没有启动器指向它".printf (
                         t.path, AppPath.format_size (AppPath.file_size (t.path)));
                 }
                 var d = mk_label (detail);
                 d.get_style_context ().add_class ("dim-label");
                 d.set_margin_start (16);
                 texts.pack_start (d, false, false, 0);
+
+                if (!is_launcher) {
+                    var warn_line = mk_label ("勾选并清理 = 删除这个 AppImage 文件（不可恢复）");
+                    warn_line.get_style_context ().add_class ("dim-label");
+                    warn_line.set_margin_start (16);
+                    texts.pack_start (warn_line, false, false, 0);
+                }
 
                 row.pack_start (texts, true, true, 0);
                 box.pack_start (row, false, false, 0);
@@ -1367,8 +1476,11 @@ namespace Dialogs {
             section_start += 0;   // 保持可读性：sections 用 kind 过滤
         }
 
-        var also_icon = new Gtk.CheckButton.with_label ("顺便把失效启动器的缓存图标也清理掉");
-        also_icon.tooltip_text = "只删除指向缓存目录且无其它启动器引用的图标";
+        var also_icon = new Gtk.CheckButton.with_label ("顺便清理失效启动器的缓存图标");
+        also_icon.tooltip_text = "只删除位于本工具图标目录（"
+            + AppPath.shorten (AppPath.icons_hicolor_dir ())
+            + "）内、且不再被任何启动器引用的图标；\n"
+            + "你自己放在其它位置、或指向别处的图标永远不会被删除。";
         flow.pack_start (also_icon, false, false, 0);
 
         int RESP_CLEAN = 9004;
@@ -1376,15 +1488,37 @@ namespace Dialogs {
         if (clean_btn != null)
             clean_btn.get_style_context ().add_class ("destructive-action");
         add_button (dlg, "取消", Gtk.ResponseType.CANCEL);
-        dlg.set_default_response (RESP_CLEAN);
+        // Enter 必须落在「取消」上：默认勾选里没有任何 AppImage 行，但用户
+        // 一旦勾上再顺手回车，删的就是磁盘上的真实文件。
+        dlg.set_default_response (Gtk.ResponseType.CANCEL);
 
         void recount () {
             int n = 0;
-            foreach (var cb in all_checks)
-                if (cb != null && cb.active) n++;
-            if (clean_btn != null)
+            int n_appimage = 0;
+            int64 appimage_bytes = 0;
+            for (int i = 0; i < targets.length; i++) {
+                var cb = all_checks[i];
+                if (cb == null || !cb.active)
+                    continue;
+                n++;
+                if (targets[i].kind == "appimage") {
+                    n_appimage++;
+                    appimage_bytes += AppPath.file_size (targets[i].path);
+                }
+            }
+            if (clean_btn != null) {
                 clean_btn.label = "清理 %d 项".printf (n);
-            clean_btn.sensitive = (n > 0);
+                clean_btn.sensitive = (n > 0);
+            }
+            if (n_appimage > 0) {
+                warn_lab.label = ("⚠ 已勾选 <b>%d</b> 个 AppImage（合计 %s）："
+                    + "点「清理」会把这些文件从磁盘上删除，无法恢复。").printf (
+                        n_appimage,
+                        AppPath.format_size ((uint64) appimage_bytes));
+                warn_box.visible = true;
+            } else {
+                warn_box.visible = false;
+            }
         }
 
         foreach (var cb in all_checks) {
@@ -1393,6 +1527,8 @@ namespace Dialogs {
         recount ();
 
         dlg.show_all ();
+        // show_all 会把警告框等所有子控件都显示出来，之后再按勾选状态校正
+        recount ();
         int resp = dlg.run ();
 
         if (resp != RESP_CLEAN) {
@@ -1412,19 +1548,23 @@ namespace Dialogs {
                 string? derr;
                 if (DesktopFiles.delete (t.path, out derr)) {
                     ok++;
-                    if (also_icon.active && t.icon != null && t.icon.has_prefix ("/"))
+                    // 路径是否位于图标缓存目录由 remove_if_unreferenced ()
+                    // 内部把关，这里不再用「以 / 开头」这种过宽的条件。
+                    if (also_icon.active && t.icon != null)
                         remove_if_unreferenced (t.icon);
                 } else {
                     failed++;
                     msgs.add ("%s —— %s".printf (t.title, derr ?? "删除失败"));
                 }
             } else {
-                try {
-                    AppPath.file_remove (t.path);
-                    ok++;
-                } catch {
+                // AppPath.file_remove () 不抛错（底层 unlink 的返回值被丢弃），
+                // 因此以「文件是否还在」来判断成功与否，失败照常逐行汇报。
+                AppPath.file_remove (t.path);
+                if (AppPath.exists (t.path)) {
                     failed++;
-                    msgs.add ("%s —— 无法删除".printf (t.title));
+                    msgs.add ("%s —— 无法删除（可能没有权限）".printf (t.title));
+                } else {
+                    ok++;
                 }
             }
         }
@@ -1448,28 +1588,22 @@ namespace Dialogs {
         return ok;
     }
 
-    /** 图标没有被其它启动器引用时才删 */
+    /**
+     * 图标没有被其它启动器引用、且确实位于本工具的图标缓存目录内时才删。
+     *
+     * 绝不能只凭「路径以 / 开头」就删：用户完全可能把图标放在自己的目录里，
+     * 删掉就是在动用户的文件。这里以解析后的真实路径判断包含关系，目录外的
+     * 图标一律不动。
+     *
+     * 实现在引擎层（desktopfiles.vala）—— 批量删除走 repair.vala，
+     * 而 repair.vala 在自测构建里，不能依赖 GUI 文件。
+     */
     private void remove_if_unreferenced (string icon_path) {
-        if (!AppPath.exists (icon_path))
-            return;
-        foreach (var d in DesktopFiles.scan_directory (AppPath.applications_dir ()))
-            if (d.icon == icon_path)
-                return;
-        AppPath.file_remove (icon_path);
+        DesktopFiles.remove_if_unreferenced (icon_path);
     }
-
-    /* ══════════════════════════════════════════════════════════════
-     *  5. 认领
-     * ══════════════════════════════════════════════════════════════ */
 
     public Repair.ExecResult? claim_entry (Gtk.Window parent, AppEntry entry,
                                            DesktopFiles.Entry d, AppConfig cfg) {
-
-        if (d.is_managed) {
-            info (parent, "已被管理", "%s 已带标记键，无需认领。".printf (d.basename), Gtk.MessageType.INFO);
-            return null;
-        }
-
         var plan = new RepairPlan (entry, d);
         plan.claim = true;
         plan.mode = FixMode.CONSERVATIVE;
@@ -2095,6 +2229,10 @@ namespace Dialogs {
         var sw_uic = mk_switch ("写入后运行 gtk-update-icon-cache", cfg.should_update_icon_cache ());
         var sw_marker = mk_switch ("写标记键（X-AppImage-Manager-*）", cfg.write_marker ());
         var sw_del_icon = mk_switch ("删除启动器时同时删图标", cfg.delete_icon_with_launcher ());
+        sw_del_icon.tooltip_text = "只删除位于本工具图标目录（"
+            + AppPath.shorten (AppPath.icons_hicolor_dir ())
+            + "）内、且不再被任何启动器引用的图标。\n"
+            + "你自己放在其它位置、或被别处引用的图标永远不会被删除。";
         flow.pack_start (sw_udb, false, false, 0);
         flow.pack_start (sw_uic, false, false, 0);
         flow.pack_start (sw_marker, false, false, 0);
@@ -2207,17 +2345,70 @@ namespace Dialogs {
         return l;
     }
 
-    private Gtk.CheckButton mk_switch (string text, bool active) {
-        var cb = new Gtk.CheckButton ();
-        cb.active = active;
-        var sw = new Gtk.Switch ();
-        sw.active = active;
-        sw.halign = Gtk.Align.END;
-        sw.valign = Gtk.Align.CENTER;
-        cb.add (sw);
-        cb.label = text;
-        cb.show_all ();
-        return cb;
+    /**
+     * 设置页里的一行开关：左侧是带标签的 CheckButton（保存值以它为准），
+     * 右侧是 Gtk.Switch，两者始终同步。
+     *
+     * GtkCheckButton 是 GtkBin，内部已经有子控件：用 cb.add (sw) 把开关塞
+     * 进去会失败（Gtk 警告 + 开关根本不进控件树，既看不见也点不到）。所以
+     * 这里用一个横向 GtkBox 平铺两个控件。
+     */
+    private class SwitchRow : Gtk.Box {
+        public Gtk.CheckButton check;
+        public Gtk.Switch handle;
+
+        private bool syncing = false;
+
+        /** 保存路径读这个值；读到的始终是 CheckButton 的状态 */
+        public bool active {
+            get { return check.active; }
+            set { check.active = value; }
+        }
+
+        public SwitchRow (string text, bool initial) {
+            orientation = Gtk.Orientation.HORIZONTAL;
+            spacing = 6;
+
+            check = new Gtk.CheckButton.with_label (text);
+            check.active = initial;
+            pack_start (check, true, true, 0);
+
+            handle = new Gtk.Switch ();
+            handle.active = initial;
+            handle.halign = Gtk.Align.END;
+            handle.valign = Gtk.Align.CENTER;
+            pack_start (handle, false, false, 0);
+
+            // 注意：必须用 lambda 包一层。直接把局部函数接到信号上时 Vala 会
+            // 复制委托，捕获的变量在信号触发时已悬空 → 段错误。
+            // 同步只写真正不同的值，并加守卫避免信号回环。
+            handle.notify["active"].connect (() => { sync_from_handle (); });
+            check.toggled.connect (() => { sync_from_check (); });
+
+            show_all ();
+        }
+
+        private void sync_from_handle () {
+            if (syncing)
+                return;
+            syncing = true;
+            if (check.active != handle.active)
+                check.active = handle.active;
+            syncing = false;
+        }
+
+        private void sync_from_check () {
+            if (syncing)
+                return;
+            syncing = true;
+            if (handle.active != check.active)
+                handle.active = check.active;
+            syncing = false;
+        }
+    }
+
+    private SwitchRow mk_switch (string text, bool active) {
+        return new SwitchRow (text, active);
     }
 
     private Gtk.Box labelled (string text, Gtk.Widget w) {
@@ -2234,14 +2425,71 @@ namespace Dialogs {
      *  7. 历史
      * ══════════════════════════════════════════════════════════════ */
 
+    /** 历史状态 → 中文；未知值原样返回，保证可读而不是被吞掉 */
+    private string hist_status_text (string status) {
+        switch (status) {
+            case Journal.STATUS_PREPARED:    return "已准备（未完成）";
+            case Journal.STATUS_COMMITTED:   return "已完成";
+            case Journal.STATUS_ROLLED_BACK: return "已回滚";
+            case Journal.STATUS_INTERRUPTED: return "已中断";
+            default:                         return status;
+        }
+    }
+
+    /** 历史操作 → 中文；未知值原样返回 */
+    private string hist_operation_text (string operation) {
+        switch (operation) {
+            case "repair":       return "批量修复";
+            case "create":       return "创建启动器";
+            case "delete":       return "删除启动器";
+            case "claim":        return "认领";
+            case "unclaim":      return "取消认领";
+            case "rollback":     return "还原备份";
+            case "extract-meta": return "补全元数据";
+            default:             return operation;
+        }
+    }
+
+    /** 历史模式 → 中文；空模式返回空串，调用方据此省略括号 */
+    private string hist_mode_text (string mode) {
+        switch (mode) {
+            case "":             return "";
+            case "conservative": return "保守";
+            case "enrich":       return "补全";
+            case "rebuild":      return "重建";
+            default:             return mode;
+        }
+    }
+
+    /** 「操作（模式）」；没有模式时绝不渲染空括号 */
+    private string hist_op_text (string operation, string mode) {
+        string op = hist_operation_text (operation);
+        string m = hist_mode_text (mode);
+        return m == "" ? op : op + "（" + m + "）";
+    }
+
+    /** 事务内单条目的状态 → 中文；未知值原样返回 */
+    private string hist_item_status_text (string status) {
+        switch (status) {
+            case "pending": return "待处理";
+            case "done":    return "完成";
+            case "failed":  return "失败";
+            case "skipped": return "跳过";
+            default:        return status;
+        }
+    }
+
     public bool history (Gtk.Window parent, AppConfig cfg) {
         var dlg = new_dialog (parent, "操作历史", 860, 560);
         Gtk.Box content = dlg.get_content_area ();
         content.set_border_width (12);
         content.set_spacing (10);
 
+        // 列全部声明为 string：之前的「文件数 / 已完成」列声明成 int，却用
+        // "%d".printf () 的字符串去 set_value —— GtkListStore 拒绝转换并抛
+        // Gtk-WARNING，值静默变成 0。展示用文本本来就该是 string 列。
         var store = new Gtk.ListStore (6, typeof (string), typeof (string),
-            typeof (string), typeof (string), typeof (int), typeof (int));
+            typeof (string), typeof (string), typeof (string), typeof (string));
         var tree = new Gtk.TreeView ();
         tree.set_model (store);
 
@@ -2260,6 +2508,18 @@ namespace Dialogs {
         btn_box.pack_start (view_btn, false, false, 0);
         btn_box.pack_start (undo_btn, false, false, 0);
 
+        // 空历史时显示的说明，替代「空白表格 + 永远点不开的按钮」
+        var empty_lab = new Gtk.Label (null);
+        empty_lab.use_markup = true;
+        empty_lab.xalign = 0.0f;
+        empty_lab.yalign = 0.0f;
+        empty_lab.set_line_wrap (true);
+        empty_lab.set_margin_start (4);
+        empty_lab.label = "<b>还没有操作历史</b>\n\n"
+            + "创建、修复、删除、认领等会改动文件的操作，本工具都会先备份、"
+            + "再记录一条事务，方便你随时查看或还原。\n"
+            + "现在这里为空，说明还没有执行过这类操作 —— 这是正常的。";
+
         void refresh_list () {
             store.clear ();
             var entries = new GenericArray<Backup.HistoryEntry> ();
@@ -2271,8 +2531,8 @@ namespace Dialogs {
                 Gtk.TreeIter it;
                 store.append (out it);
                 store.set_value (it, 0, h.display_time ());
-                store.set_value (it, 1, h.display_op () + "（" + h.mode + "）");
-                store.set_value (it, 2, h.status);
+                store.set_value (it, 1, hist_op_text (h.operation, h.mode));
+                store.set_value (it, 2, hist_status_text (h.status));
                 store.set_value (it, 3, "%d".printf (h.total));
                 store.set_value (it, 4, "%d".printf (h.done));
             }
@@ -2292,10 +2552,23 @@ namespace Dialogs {
             return v.get_string ();
         }
 
-        // 第 6 列放 txid 原值
+        // 第 6 列放 txid 原值；所有列都用 string，避免字符串写进 int 列的转换警告
         var hidden = new Gtk.ListStore (7, typeof (string), typeof (string),
-            typeof (string), typeof (string), typeof (int), typeof (int), typeof (string));
+            typeof (string), typeof (string), typeof (string), typeof (string), typeof (string));
         tree.set_model (hidden);
+
+        var tree_scroll = mk_scrolled (tree, 320);
+
+        void update_action_buttons () {
+            bool has_sel = false;
+            if (sel != null) {
+                Gtk.TreeModel model;
+                Gtk.TreeIter iter;
+                has_sel = sel.get_selected (out model, out iter);
+            }
+            view_btn.sensitive = has_sel;
+            undo_btn.sensitive = has_sel;
+        }
 
         void refresh_list2 () {
             hidden.clear ();
@@ -2308,12 +2581,17 @@ namespace Dialogs {
                 Gtk.TreeIter it;
                 hidden.append (out it);
                 hidden.set_value (it, 0, h.display_time ());
-                hidden.set_value (it, 1, h.display_op () + "（" + h.mode + "）");
-                hidden.set_value (it, 2, h.status);
+                hidden.set_value (it, 1, hist_op_text (h.operation, h.mode));
+                hidden.set_value (it, 2, hist_status_text (h.status));
                 hidden.set_value (it, 3, "%d".printf (h.total));
                 hidden.set_value (it, 4, "%d".printf (h.done));
                 hidden.set_value (it, 5, h.txid);
             }
+
+            bool any = (hidden.iter_n_children (null) > 0);
+            tree_scroll.visible = any;
+            empty_lab.visible = !any;
+            update_action_buttons ();
         }
 
         string current_txid () {
@@ -2327,6 +2605,11 @@ namespace Dialogs {
             model.get_value (iter, 5, out v);
             return v.get_string ();
         }
+
+        // 没选中任何行时「查看 / 还原」直接禁用，不再让用户点开
+        // 一个只回一句「请先选中」的弹窗。
+        if (sel != null)
+            sel.changed.connect (() => { update_action_buttons (); });
 
         view_btn.clicked.connect (() => {
             string txid = current_txid ();
@@ -2375,10 +2658,8 @@ namespace Dialogs {
                 res.failed > 0 ? Gtk.MessageType.WARNING : Gtk.MessageType.INFO);
         });
 
-        refresh_list2 ();
-
-        var sw = mk_scrolled (tree, 320);
-        content.pack_start (sw, true, true, 0);
+        content.pack_start (empty_lab, true, true, 0);
+        content.pack_start (tree_scroll, true, true, 0);
 
         var bottom = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8);
         var prune_btn = new Gtk.Button.with_label ("清理旧备份");
@@ -2401,6 +2682,8 @@ namespace Dialogs {
 
         add_button (dlg, "关闭", Gtk.ResponseType.CLOSE);
         dlg.show_all ();
+        // show_all 会无条件显示所有子控件，空状态与按钮敏感度必须在那之后再定
+        refresh_list2 ();
         dlg.run ();
         dlg.destroy ();
         return true;
@@ -2441,8 +2724,8 @@ namespace Dialogs {
         head.xalign = 0.0f;
         head.label = "<b>%s</b> · %s · %s\n<span size='small'>%s</span>".printf (
             GLib.Markup.escape_text (txid, -1),
-            GLib.Markup.escape_text (tx.operation, -1),
-            GLib.Markup.escape_text (tx.status, -1),
+            GLib.Markup.escape_text (hist_op_text (tx.operation, tx.mode), -1),
+            GLib.Markup.escape_text (hist_status_text (tx.status), -1),
             GLib.Markup.escape_text (tx.started_at, -1));
         content.pack_start (head, false, false, 0);
 
@@ -2458,7 +2741,7 @@ namespace Dialogs {
             name.xalign = 0.0f;
             name.label = "<b>%s</b>  <span foreground='#7f8c8d'>%s</span>".printf (
                 GLib.Markup.escape_text (GLib.Path.get_basename (it.orig_path), -1),
-                GLib.Markup.escape_text (it.status, -1));
+                GLib.Markup.escape_text (hist_item_status_text (it.status), -1));
             card.pack_start (name, false, false, 0);
 
             var path_l = mk_label (it.orig_path);
