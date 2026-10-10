@@ -333,59 +333,6 @@ namespace Dialogs {
         var f_wm = new Gtk.Entry ();
         f_wm.set_text (decision.fields.startup_wm_class);
 
-        // 图标那一行单独搭：Entry 右边挂预览 + 两个按钮
-        var icon_row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6);
-        var icon_preview = new Gtk.Image ();
-        icon_preview.set_pixel_size (32);
-        icon_row.pack_start (f_icon, true, true, 0);
-        icon_row.pack_start (icon_preview, false, false, 0);
-
-        var icon_pick_btn = new Gtk.Button.with_label (I18n.s ("选择…"));
-        var icon_clear_btn = new Gtk.Button.with_label (I18n.s ("清除"));
-        icon_row.pack_start (icon_pick_btn, false, false, 0);
-        icon_row.pack_start (icon_clear_btn, false, false, 0);
-
-        // 预览要跟着文本变：用户手打名字、用选择器挑文件都得刷新。
-        // 认得出是绝对路径就直接显示那张图，否则当主题图标名去找。
-        void refresh_icon_preview () {
-            string v = f_icon.text.strip ();
-            if (v == "") {
-                icon_preview.set_from_icon_name ("application-x-executable",
-                                                 Gtk.IconSize.BUTTON);
-                icon_preview.set_tooltip_text (I18n.s ("未设置图标，将使用系统通用图标"));
-            } else if (v.has_prefix ("/")) {
-                try {
-                    icon_preview.set_from_pixbuf (
-                        new Gdk.Pixbuf.from_file_at_scale (v, 32, 32, true));
-                    icon_preview.set_tooltip_text (v);
-                } catch {
-                    icon_preview.set_from_icon_name ("image-missing",
-                                                     Gtk.IconSize.BUTTON);
-                    icon_preview.set_tooltip_text (I18n.s ("读不出这张图片：%s").printf (v));
-                }
-            } else {
-                icon_preview.set_from_icon_name (v, Gtk.IconSize.BUTTON);
-                icon_preview.set_tooltip_text (I18n.s ("主题图标：%s").printf (v));
-            }
-        }
-
-        refresh_icon_preview ();
-        f_icon.changed.connect (refresh_icon_preview);
-
-        icon_pick_btn.clicked.connect (() => {
-            string? picked = pick_image_file (dlg);
-            if (picked == null)
-                return;
-            string installed = install_chosen_icon (picked, entry.get_slug (), cfg);
-            if (installed == "") {
-                info (dlg, I18n.s ("无法安装图标"),
-                      I18n.s ("复制到图标缓存失败：\n%s").printf (picked));
-                return;
-            }
-            f_icon.set_text (installed);
-        });
-
-        icon_clear_btn.clicked.connect (() => f_icon.set_text (""));
 
         int row = 0;
         grid.attach (mk_label (I18n.s ("名称")), 0, row, 1, 1);
@@ -399,7 +346,7 @@ namespace Dialogs {
         exec_box.pack_start (exec_note, false, false, 0);
         grid.attach (exec_box, 1, row++, 1, 1);
         grid.attach (mk_label (I18n.s ("图标")), 0, row, 1, 1);
-        grid.attach (icon_row, 1, row++, 1, 1);
+        grid.attach (f_icon, 1, row++, 1, 1);
         grid.attach (mk_label (I18n.s ("分类")), 0, row, 1, 1);
         grid.attach (cat_box, 1, row++, 1, 1);
         grid.attach (mk_label (I18n.s ("备注")), 0, row, 1, 1);
@@ -676,6 +623,60 @@ namespace Dialogs {
         // 挑一张图，选中的文件会被装进本工具的图标缓存，之后按名字引用。
         Gtk.Entry f_icon = new Gtk.Entry ();
         f_icon.set_text (de.icon);
+
+        // 图标那一行单独搭：Entry 右边挂预览 + 两个按钮
+        var icon_row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6);
+        var icon_preview = new Gtk.Image ();
+        icon_preview.set_pixel_size (32);
+        icon_row.pack_start (f_icon, true, true, 0);
+        icon_row.pack_start (icon_preview, false, false, 0);
+
+        var icon_pick_btn = new Gtk.Button.with_label (I18n.s ("选择…"));
+        var icon_clear_btn = new Gtk.Button.with_label (I18n.s ("清除"));
+        icon_row.pack_start (icon_pick_btn, false, false, 0);
+        icon_row.pack_start (icon_clear_btn, false, false, 0);
+
+        // 预览要跟着文本变：用户手打名字、用选择器挑文件都得刷新。
+        // 认得出是绝对路径就直接显示那张图，否则当主题图标名去找。
+        void refresh_icon_preview () {
+            string v = f_icon.text.strip ();
+            if (v == "") {
+                icon_preview.set_from_icon_name ("application-x-executable",
+                                                 Gtk.IconSize.BUTTON);
+                icon_preview.set_tooltip_text (I18n.s ("未设置图标，将使用系统通用图标"));
+            } else if (v.has_prefix ("/")) {
+                try {
+                    icon_preview.set_from_pixbuf (
+                        new Gdk.Pixbuf.from_file_at_scale (v, 32, 32, true));
+                    icon_preview.set_tooltip_text (v);
+                } catch {
+                    icon_preview.set_from_icon_name ("image-missing",
+                                                     Gtk.IconSize.BUTTON);
+                    icon_preview.set_tooltip_text (I18n.s ("读不出这张图片：%s").printf (v));
+                }
+            } else {
+                icon_preview.set_from_icon_name (v, Gtk.IconSize.BUTTON);
+                icon_preview.set_tooltip_text (I18n.s ("主题图标：%s").printf (v));
+            }
+        }
+
+        refresh_icon_preview ();
+        f_icon.changed.connect (refresh_icon_preview);
+
+        icon_pick_btn.clicked.connect (() => {
+            string? picked = pick_image_file (dlg);
+            if (picked == null)
+                return;
+            string installed = install_chosen_icon (picked, entry.get_slug (), cfg);
+            if (installed == "") {
+                info (dlg, I18n.s ("无法安装图标"),
+                      I18n.s ("复制到图标缓存失败：\n%s").printf (picked));
+                return;
+            }
+            f_icon.set_text (installed);
+        });
+
+        icon_clear_btn.clicked.connect (() => f_icon.set_text (""));
         Gtk.Entry f_comment = new Gtk.Entry ();
         f_comment.set_text (de.comment);
         Gtk.CheckButton f_term = new Gtk.CheckButton.with_label (I18n.s ("在终端中启动"));
@@ -689,7 +690,7 @@ namespace Dialogs {
         grid.attach (mk_label (I18n.s ("命令")), 0, row, 1, 1);
         grid.attach (f_exec, 1, row++, 1, 1);
         grid.attach (mk_label (I18n.s ("图标")), 0, row, 1, 1);
-        grid.attach (f_icon, 1, row++, 1, 1);
+        grid.attach (icon_row, 1, row++, 1, 1);
         grid.attach (mk_label (I18n.s ("备注")), 0, row, 1, 1);
         grid.attach (f_comment, 1, row++, 1, 1);
         grid.attach (f_term, 1, row++, 1, 1);

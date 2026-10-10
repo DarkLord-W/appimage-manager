@@ -34,6 +34,11 @@ public class AppMgr : Gtk.Application {
         // 语言必须在任何界面文案定下来之前定死：控件文字都是构造时调
         // I18n.s() 取的，运行中再改就来不及了。缺省 auto = 跟随系统 locale。
         I18n.current = config.language ();
+        // 必须在这里调而不是 main() 开头：那边 I18n.current 还是 AUTO，
+        // 会按系统 locale 判成英文，中文用户拿到的是英文文件选择器。
+        // 又必须早于 gtk_init —— Gtk.Application 的 startup 才做 gtk_init，
+        // 而本 construct 跑在 run() 之前，时机正好。
+        sync_gtk_locale ();
         store = new Store (config);
     }
 
@@ -83,6 +88,50 @@ public class AppMgr : Gtk.Application {
             window.refresh ();
         }
     }
+}
+
+
+/**
+ * 让 GTK 自带控件的语言跟着本应用走。
+ *
+ * GTK 里的文件选择器、颜色选择器、关于框的内建按钮，文案来自 GTK 自己的
+ * gettext 域，不经过本项目的 I18n 表 —— 所以会出现「界面中文、选文件时
+ * 弹出英文对话框」这种割裂（实测如此）。
+ *
+ * 修法是在 GTK 初始化之前把 locale 环境变量改成应用所选语言对应的值。
+ * 必须在 Gtk.init 之前：gettext 只在**第一次**查某个域时读一次
+ * LC_MESSAGES / LANGUAGE，之后再改就来不及了。
+ *
+ * 语言包没装时 setlocale 会失败，这时 GTK 退回默认语言，不崩也不报错 ——
+ * 退化成现在这个样子，不会更糟。
+ */
+void sync_gtk_locale () {
+    bool zh = (I18n.Lang.effective () == I18n.Lang.ZH);
+
+    // 三个变量各有一个坑，实测出来的（写了个 C 小程序逐组试）：
+    //
+    //   LC_ALL  —— 有值就**必须清掉**。glibc 的 gettext 在 LC_ALL 被显式
+    //              设置时会直接忽略 LANGUAGE，怎么调都是英文。这一条最坑，
+    //              一开始把它设成 C.UTF-8，结果中文界面配英文文件选择器。
+    //
+    //   LANGUAGE —— 真正决定取哪个语言目录的。支持冒号分隔的候选列表，
+    //              所以 zh_CN 找不到时还能退到 zh。它**不需要**系统生成
+    //              对应 locale，只要 .mo 文件在就行 —— 这台机器就一个
+    //              zh_CN locale 都没生成，但 GTK 的中文翻译照样能用。
+    //
+    //   LANG    —— 必须是一个**真实存在**的 locale。设成 C / POSIX / C.UTF-8
+    //              都会让 gettext 整体不查翻译，连 LANGUAGE 都不看。
+    //              实测只有 en_US.UTF-8 这种才算数。
+    GLib.Environment.unset_variable ("LC_ALL");
+
+    GLib.Environment.set_variable ("LANGUAGE", zh ? "zh_CN:zh" : "en", true);
+
+    string? lang = GLib.Environment.get_variable ("LANG");
+    if (lang == null || lang == "" || lang == "C" || lang == "POSIX"
+            || lang == "C.UTF-8" || lang == "C.utf8")
+        GLib.Environment.set_variable ("LANG", "en_US.UTF-8", true);
+
+    GLib.Intl.setlocale (GLib.LocaleCategory.ALL, "");
 }
 
 public int main (string[] args) {
