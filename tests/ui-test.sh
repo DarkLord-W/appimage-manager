@@ -35,6 +35,7 @@
 #     step_menu_view        视图 menu opens, 9 items
 #     step_menu_tools       工具 menu opens, 5 items
 #     step_menu_help        帮助 menu opens, 2 items
+#     step_menu_language    语言 menu opens, 3 items (不点选，只数项)
 #     step_dialogs          设置 / 修复历史 / 失效与孤儿清理 / 快捷键 / 关于 /
 #                           添加扫描目录 / 健康检查 open & close
 #     step_actionbar_btns   创建/修复/认领/图标/删除 — dialog or correctly
@@ -838,6 +839,34 @@ step_menu_help() {
         record step_menu_help PASS "menu opened, 2 items (键盘快捷键/关于)"
     else
         record step_menu_help FAIL "menu item count $bands != 2"
+    fi
+}
+
+step_menu_language() {
+    echo
+    echo "── step_menu_language: 语言 menu opens with 3 items ──"
+    if ! ensure_app populated || [ -z "$MAIN_WIN" ]; then
+        record step_menu_language FAIL "window unavailable"
+        return
+    fi
+    open_menu "alt+l"
+    if ! wait_app_popup 62 12; then
+        record step_menu_language FAIL "语言 menu did not open"
+        return
+    fi
+    park_mouse
+    grab_win "$POPUP_FOUND" "$OUT_DIR/08b_menu_language.png" >/dev/null 2>&1 || true
+    add_shot "$OUT_DIR/08b_menu_language.png"
+    local bands; bands="$(count_popup_bands "$OUT_DIR/08b_menu_language.png")"
+
+    # 只数项、不点选。点了会写配置并弹「立即重启」提示条，
+    # 把后面十几步的界面状态全带偏 —— 那不是这一步要测的东西。
+    send_key "$MAIN_WIN" Escape
+    sleep 0.4
+    if [ "$bands" = "3" ]; then
+        record step_menu_language PASS "menu opened, 3 items (跟随系统/简体中文/English)"
+    else
+        record step_menu_language FAIL "menu item count $bands != 3"
     fi
 }
 
@@ -2030,6 +2059,7 @@ run_step step_menu_edit
 run_step step_menu_view
 run_step step_menu_tools
 run_step step_menu_help
+run_step step_menu_language
 run_step step_dialogs
 run_step step_actionbar_btns
 run_step step_context_menu
