@@ -272,12 +272,18 @@ sudo apt install desktop-file-utils xvfb xfwm4 xdotool imagemagick xclip
 
 ```bash
 make appimage
-# → dist/AppImage-Manager-1.0.0-x86_64.AppImage   （约 496 KiB）
+# → dist/AppImage-Manager-1.0.0-x86_64.AppImage
 ```
 
-体积只有几百 KB，是因为它不打包 GTK，运行时用系统的。要完全自包含得把整个
-GTK 栈塞进去，体积会涨到 100 MB 以上，还要处理 glibc 版本兼容，对这个工具
-不划算。
+成品 0.5 到 1.3 MB 不等，取决于用哪个 runtime。runtime 是 AppImage 格式的启动器
+（AppImage 就是 `ELF runtime ++ squashfs` 两段拼起来），本项目不构建它：本地
+`make appimage` 从这台机器上已有的 AppImage 里截一个（常见的经典 runtime 约
+180 KB），发布版的 CI 用 AppImageKit 官方的 type2-runtime，944 KB，musl 静态、
+不依赖宿主的 glibc，代价是体积。
+
+扣掉 runtime，应用本身压缩后只有 280 KB 左右 —— 这是不打包 GTK 换来的。要完全
+自包含得把整个 GTK 栈塞进去，体积会涨到 100 MB 以上，还要处理 glibc 版本兼容，
+对这个工具不划算。
 
 打包不需要联网，也不需要 `appimagetool`：脚本从本机已有的任意 type-2
 AppImage 里取出运行时，配上系统的 `mksquashfs` 自己拼。运行时按这个顺序找，

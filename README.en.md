@@ -314,13 +314,20 @@ narrow; the ones only it can find are worth running regularly, not on every push
 
 ```bash
 make appimage
-# → dist/AppImage-Manager-1.0.0-x86_64.AppImage   (~496 KiB)
+# → dist/AppImage-Manager-1.0.0-x86_64.AppImage
 ```
 
-It is only a few hundred KB because GTK is not bundled; the system one is used at
-runtime. True self-containment would mean pulling in the whole GTK stack, pushing
-the size past 100 MB and dragging in glibc compatibility problems, which is not a
-good trade for a tool like this.
+The result lands between 0.5 and 1.3 MB depending on which runtime it uses. The
+runtime is the AppImage launcher (an AppImage is `ELF runtime ++ squashfs`), and
+this project does not build it. A local `make appimage` carves one out of an
+AppImage already on the machine, typically the classic runtime at around 180 KB;
+the CI behind the releases uses AppImageKit's official type2-runtime, 944 KB,
+musl-static and independent of the host glibc. Size is what that costs.
+
+Strip the runtime and the application itself compresses to about 280 KB, which is
+what not bundling GTK buys you. True self-containment would mean pulling in the
+whole GTK stack, pushing the size past 100 MB and dragging in glibc compatibility
+problems, which is not a good trade for a tool like this.
 
 Packaging needs no network access and no `appimagetool`. The script takes the
 runtime out of any type-2 AppImage already on the machine and assembles the bundle
