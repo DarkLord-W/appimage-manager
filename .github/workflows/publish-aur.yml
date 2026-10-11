@@ -152,7 +152,15 @@ jobs:
             su builder -c "cd '/tmp/stage/$p' && namcap *.pkg.tar.zst" || true
 
             echo "── 包内容 ──"
-            tar --zstd -tf "/tmp/stage/$p"/*.pkg.tar.zst | sed 's/^/  /'
+            # 用 find 逐个列，不要写成 `tar -tf /path/*.pkg.tar.zst`：
+            # makepkg 默认会**额外**生成一个 -debug 包，glob 会展开成两个
+            # 路径，而 `tar -tf 文件1 文件2` 会把第二个当成文件1内部的
+            # 成员名去查 —— 报 "Not found in archive"、退出码 2，
+            # set -e 下整步直接红，看起来像打包坏了，其实包是好的。
+            while IFS= read -r pkg; do
+              echo "  【$(basename "$pkg")】"
+              tar --zstd -tf "$pkg" | sed 's/^/    /'
+            done < <(find "/tmp/stage/$p" -maxdepth 1 -name '*.pkg.tar.zst' | sort)
           done
 
       # ── 发布 ────────────────────────────────────────────────────────

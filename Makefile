@@ -17,6 +17,21 @@ VAPIDIR     ?=
 CC          ?= gcc
 VERSION     ?= 1.0.0
 
+# 发行版的打包工具都是通过**环境变量**注入编译参数的，这里必须让它们生效，
+# 否则打包出来会静默地少掉加固和调试信息：
+#
+#   LDFLAGS  makepkg.conf 里带 `-Wl,-z,relro,-z,now`（全量 RELRO）。
+#            不接的话 namcap 会报 "lacks FULL RELRO" —— 本项目包里确实没有，
+#            不是误报。Debian 的 dh、rpm 的 %build 是同一套做法。
+#   CFLAGS   带 -g。不接的话 makepkg 生成的 -debug 包是**空的**，还带一个
+#            指向不存在文件的符号链接（namcap 报 E: Symlink points to
+#            non-existing）。那不是 namcap 挑刺，是包真的坏了。
+#
+# 用 ?= 而不是 =：环境里已经有值就不覆盖（这正是打包工具要的）。
+# 直接 `make` 的人拿下面的默认值。
+CFLAGS      ?= -O2
+LDFLAGS     ?=
+
 SOURCES := $(sort $(wildcard src/*.vala))
 VALA_C  := $(SOURCES:.vala=.c)
 OBJS    := $(SOURCES:.vala=.o)
@@ -36,10 +51,10 @@ VALAFLAGS := $(PKG_FLAGS) \
 all: $(BIN)
 
 $(BIN): $(OBJS)
-	$(CC) -o $@ $(OBJS) $(PKG_LIBS) -lm
+	$(CC) $(LDFLAGS) -o $@ $(OBJS) $(PKG_LIBS) -lm
 
 src/%.o: src/%.c
-	$(CC) -c -o $@ $< $(PKG_CFLAGS) -Wno-deprecated-declarations
+	$(CC) $(CFLAGS) -c -o $@ $< $(PKG_CFLAGS) -Wno-deprecated-declarations
 
 # Vala 编译器需要一次看到全部源文件才能解析跨文件类型。
 # 用 stamp 文件避免「多目标规则」被 make 展开成 N 次调用。
