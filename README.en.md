@@ -1,8 +1,14 @@
 # AppImage Manager
 
+[![CI](https://github.com/DarkLord-W/appimage-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/DarkLord-W/appimage-manager/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/DarkLord-W/appimage-manager)](https://github.com/DarkLord-W/appimage-manager/releases)
+[![License](https://img.shields.io/github/license/DarkLord-W/appimage-manager)](LICENSE)
+
+[Screenshots](#screenshots) · [Download](#download) · [Usage](#usage) · [How it edits your files](#how-it-edits-your-files) · [Building](#building)
+
 English | [简体中文](README.md)
 
-![Main window](docs/screenshots/main-window.en.png)
+Scans the directories you point it at, turns the AppImages it finds into proper desktop launchers, and keeps checking whether those launchers still work.
 
 The appeal of AppImage is that there is nothing to install. The catch is that
 nothing does the work an installer would have done: no `.desktop` file, no icon,
@@ -12,16 +18,46 @@ rules. Get it wrong and the icon does not appear, the app does not show up in
 search, and the link breaks the moment you move the AppImage somewhere else.
 Give it a few months and `~/.local/share/applications` is full of them.
 
-This tool scans directories you point it at, builds proper launchers for the
-AppImages it finds, and keeps checking whether those launchers still work.
-Problems are listed one by one, each with a diff preview before anything is
-written, and every change is backed up.
+This tool deals with that. It never touches your AppImages, only the launchers
+around them, and every change comes with a diff preview, a backup and a way to
+undo it. Written in Vala + GTK3, builds to a single native binary.
 
-Written in Vala + GTK3. Builds to a single native binary.
+## Screenshots
 
-## Installation
+#### Main window
 
-Download from [Releases](https://github.com/DarkLord-W/appimage-manager/releases):
+![Main window](docs/screenshots/main-window.en.png)
+
+One row per AppImage with its current state on the right. Filtering and search
+both work.
+
+#### Creating a launcher
+
+![Create launcher](docs/screenshots/create-dialog.en.png)
+
+Fields are pre-filled from the filename, and the panel on the right shows the
+exact `.desktop` file that will be written.
+
+#### Checking and repairing
+
+![Repair dialog](docs/screenshots/repair-dialog.en.png)
+
+Every problem is listed with the rule it hit and the suggested fix, with a
+unified diff at the bottom.
+
+#### Context menu
+
+![Context menu](docs/screenshots/context-menu.en.png)
+
+Per-entry actions live here; batch actions are on the action bar at the top.
+
+Simplified Chinese interface:
+
+![Chinese UI](docs/screenshots/main-window.png)
+
+## Download
+
+Grab one from [Releases](https://github.com/DarkLord-W/appimage-manager/releases):
 
 | File | Notes |
 |---|---|
@@ -42,36 +78,28 @@ To build from source, see [Building](#building).
 ### Scanning
 
 Add directories under "Add Directory". You can add several, and subdirectories
-are scanned recursively. Each row in the list is one AppImage, with its current
-state on the right.
+are scanned recursively.
 
-There are four states. Green "New" means there is no launcher yet. Orange
-"Optimizable" means a launcher exists but has problems, and the number tells you
-how many. Blue "External" means the launcher was created by something else or
-written by hand, and this tool leaves it alone. Green "Created" means it is
-managed here.
-
-The filter dropdown narrows the list to one kind. The search box filters by name
-and path.
+There are four states. "New" means there is no launcher yet. "Optimizable" means
+a launcher exists but has problems, and the number tells you how many.
+"External" means the launcher was created by something else or written by hand,
+and this tool leaves it alone. "Created" means it is managed here. New and
+Optimizable are both amber; the difference is that Optimizable carries a problem
+count.
 
 ### Creating a launcher
 
 Tick the entries you want and click "Create" in the action bar.
 
-![Create launcher dialog](docs/screenshots/create-dialog.en.png)
-
 A few fields are pre-filled from the filename
-(`Obsidian-1.5.3-x86_64.AppImage` becomes `Obsidian`). Name, categories,
-comment and icon are all editable. Categories is an editable dropdown that
-suggests values by keyword: type `krita` and it offers `Graphics;`.
+(`Obsidian-1.5.3-x86_64.AppImage` becomes `Obsidian`). Name, categories, comment
+and icon are all editable. Categories is an editable dropdown that suggests
+values by keyword: type `krita` and it offers `Graphics;`. The icon field starts
+empty; click "Choose…" to pick a file from disk (png, svg or xpm), which gets
+copied into the icon cache with a 32 px preview next to the field.
 
-The panel below shows **the exact `.desktop` file that will be written**,
-updating as you type. You know what you are getting before you commit.
-
-The icon field starts empty. Click "Choose…" to pick a file from disk (png, svg
-or xpm); it gets copied into the icon cache and a 32 px preview appears next to
-the field. In batch mode you get one dialog per entry, and you can skip a single
-one or tick "use these defaults for the rest" to get through them all.
+In batch mode you get one dialog per entry, and you can skip a single one or
+tick "use these defaults for the rest" to get through them all.
 
 Nothing is unpacked during creation. The whole path is string manipulation, it
 finishes in milliseconds and cannot hang on a large file. If you do want the
@@ -83,8 +111,6 @@ failure while telling you why.
 ### Checking and repairing
 
 Select an entry and click "Repair", or just double-click it.
-
-![Repair dialog](docs/screenshots/repair-dialog.en.png)
 
 Every problem is listed with the rule it hit, its current value, and what the
 tool intends to change it to. In the middle you pick a repair mode:
@@ -102,14 +128,11 @@ Nothing is written until you confirm.
 
 ### Context menu
 
-Per-entry actions live here.
-
-![Context menu](docs/screenshots/context-menu.en.png)
-
-The split with the persistent action bar is deliberate: the bar handles batch
-operations (create, repair, claim, icons, delete) and the context menu handles a
-single entry (edit, test run, open containing directory, copy path). The
-floating action bar in the bottom-right offers the same single-entry actions.
+Per-entry actions live here. The split with the action bar is deliberate: the
+bar handles batch operations (create, repair, claim, icons, delete) and the
+context menu handles a single entry (edit, test run, open containing directory,
+copy path). The floating action bar in the bottom-right offers the same
+single-entry actions.
 
 Target selection is "ticked entries win; with nothing ticked it falls back to
 the selected row". Buttons enable and disable based on state, and a disabled
@@ -136,7 +159,9 @@ buttons: "Add Directory" and "Show Common Locations". The latter lists
 `~/Applications`, `~/apps` and similar; tick them and any that do not exist are
 created.
 
-## Fidelity
+## How it edits your files
+
+This is the part of the project worth reading.
 
 Claim, repair and fill-in all rewrite your `.desktop` files. They only touch the
 lines they have confirmed they need to change and preserve the rest byte for
@@ -147,8 +172,8 @@ byte:
 - Extra groups such as `[Desktop Action …]` survive intact
 - Idempotent: running the same operation twice does not stack up duplicates
 
-Parsing the file into key/value pairs and serializing the whole thing back is
-the easy way to implement this, and it eats every one of those details. Claim a
+Parsing the file into key/value pairs and serializing the whole thing back is the
+easy way to implement this, and it eats every one of those details. Claim a
 carefully hand-written launcher and you would lose the comments and the entire
 action group, which directly contradicts the promise of appending two marker
 lines. So these three operations go through byte-level insertion and minimal
@@ -158,18 +183,11 @@ Writes are atomic: a temp file is written and `fsync`ed, then `rename`d over the
 target. A desktop environment reading concurrently sees either the old file or
 the new one, never a half-written one.
 
-## Transactions and rollback
-
-Every operation is recorded.
-
-- Two-phase commit: the intent goes into the journal first, the completion is
-  marked after
-- Unfinished transactions are detected on startup and can be rolled back in one
-  click
-- Repair history is append-only, so any earlier state can be restored, and a
-  restore is itself recorded
-- Backups are kept for 30 days / 200 transactions by default, configurable in
-  Settings
+Every operation is also recorded. The intent goes into the journal first and the
+completion is marked after, so an interrupted run is detected on startup and can
+be rolled back in one click. Repair history is append-only, so any earlier state
+can be restored, and a restore is itself recorded. Backups are kept for 30 days /
+200 transactions by default.
 
 ## Health checks
 
@@ -188,22 +206,16 @@ The Language menu has three entries: Follow system, 简体中文, English.
 
 First run follows the system locale. If `LANG` / `LC_MESSAGES` does not contain
 `zh`, you get English without having to go looking through a menu first.
+Switching shows an infobar with a Restart Now button. It restarts rather than
+switching in place because GTK widget text is fixed at construction time;
+replacing it live would mean rebuilding the whole widget tree, which costs more
+than it is worth.
 
-Switching shows an infobar with a Restart Now button. The restart re-execs in
-place (`execv`), so the GApplication single-instance name is never released and
-you do not get "clicked it and nothing happened" or two copies running at once.
-It restarts rather than switching in place because GTK widget text is fixed at
-construction time; replacing it live would mean rebuilding the whole widget
-tree, which costs more than it is worth.
+GTK's own widgets (file chooser, colour chooser) follow along too, by setting
+`LANGUAGE` before GTK initialises. Without that you get a Chinese interface
+popping up an English file dialog.
 
-The 570 UI strings live in a table in `src/i18n.vala`, compiled into the binary.
-gettext is not used, so there are no `.po` files and no `msgfmt`, which keeps a
-layer of dependencies out of CI and all three distro packages. A string that is
-missing from the table falls back to Chinese rather than rendering blank.
-
-GTK's own widgets (file chooser, colour chooser) follow along too. That is done
-by setting `LANGUAGE` before GTK initialises; without it you get a Chinese
-interface popping up an English file dialog.
+Implementation details are under [Design notes](#design-notes).
 
 ## Keyboard shortcuts
 
@@ -218,19 +230,17 @@ interface popping up an English file dialog.
 
 The window uses the native title bar drawn by the window manager; nothing is
 custom-drawn. A custom title bar tends to render minimize and maximize as blank
-circles under third-party GTK themes, and handing it to the window manager
-avoids that entirely.
+circles under third-party GTK themes, and handing it to the window manager avoids
+that entirely.
 
 There is a maximize, but no fullscreen. Under X11 a real fullscreen makes the
 window manager drop every decoration, so the title bar and all three buttons
-disappear together and it looks like the buttons are broken. Maximizing fills
-the screen while keeping the title bar. Double-clicking the title bar, or the
-window manager's own shortcut (xfwm4 uses `Super+↑`), also maximizes, and the
-menu checkbox follows.
+disappear together and it looks like the buttons are broken. Maximizing fills the
+screen while keeping the title bar.
 
 Minimum window size is 620 × 560. Below 880 px wide the floating action bar in
-the bottom-right retracts automatically, so it does not cover the last few rows
-of the list.
+the bottom-right retracts automatically, so it does not cover the last few rows of
+the list.
 
 ## Building
 
@@ -269,7 +279,7 @@ Three files are installed: `$PREFIX/bin/appimage-manager`,
 ### Tests
 
 ```bash
-make selftest        # 253 engine self-tests, no graphical environment needed
+make selftest        # 257 engine self-tests, no graphical environment needed
 tests/ui-test.sh     # 21 UI automation steps, needs the tools below
 ```
 
@@ -280,24 +290,19 @@ sudo apt install desktop-file-utils xvfb xfwm4 xdotool imagemagick xclip
 ```
 
 When a tool is missing, `ui-test.sh` skips and exits 0, so an incomplete local
-setup is never mistaken for a failure. That is also exactly why the workflow
-that runs it has to install every tool, otherwise it hands back a green false
-pass.
+setup is never mistaken for a failure. That is also exactly why the workflow that
+runs it has to install every tool, otherwise it hands back a green false pass.
 
-The two suites run separately in CI:
-
-| Workflow | Trigger | Contents | Time |
-|---|---|---|---|
-| `ci.yml` | every push / PR | build, 253 engine self-tests, packaging check | ~2 min |
-| `ui-test.yml` | manual, weekly | 21 UI automation steps | ~50 min |
-| `release.yml` | pushing a `v*` tag | build, self-tests, packaging, artifact verification | ~5 min |
+The two suites run separately in CI. `ci.yml` runs the build, the engine
+self-tests and the packaging check on every push, about two minutes. `ui-test.yml`
+runs the UI automation manually or weekly, about fifty minutes. `release.yml`
+runs the build, self-tests, packaging and artifact verification on a tag.
 
 The UI suite is kept off the per-push path for three reasons. It is slow (over 55
 minutes locally, so a 15-minute job would kill it and report a failure unrelated
-to the code). It is brittle, asserting on pixel scans and hard-coded
-coordinates, so any UI change may require recalibration. And the class of bug it
-catches is narrow; the ones only it can find are worth running regularly, not on
-every push.
+to the code). It is brittle, asserting on pixel scans and hard-coded coordinates,
+so any UI change may require recalibration. And the class of bug it catches is
+narrow; the ones only it can find are worth running regularly, not on every push.
 
 ### Packaging as an AppImage
 
@@ -307,14 +312,14 @@ make appimage
 ```
 
 It is only a few hundred KB because GTK is not bundled; the system one is used at
-runtime. True self-containment would mean pulling in the whole GTK stack,
-pushing the size past 100 MB and dragging in glibc compatibility problems, which
-is not a good trade for a tool like this.
+runtime. True self-containment would mean pulling in the whole GTK stack, pushing
+the size past 100 MB and dragging in glibc compatibility problems, which is not a
+good trade for a tool like this.
 
 Packaging needs no network access and no `appimagetool`. The script takes the
-runtime out of any type-2 AppImage already on the machine and assembles the
-bundle itself with the system `mksquashfs`. The runtime is located in this order,
-first usable one wins:
+runtime out of any type-2 AppImage already on the machine and assembles the bundle
+itself with the system `mksquashfs`. The runtime is located in this order, first
+usable one wins:
 
 1. The `RUNTIME=/path/to/runtime` environment variable
 2. `runtime/appimage-runtime-x86_64` in the repo, cached there after the first
@@ -323,10 +328,10 @@ first usable one wins:
    `$APPMGR_RUNTIME_SOURCE`, then `~/Desktop/audit/dl/*.AppImage`, then
    `/tmp/*.AppImage`
 
-The runtime length comes from the AppImage's own reported `--appimage-offset`,
-not from searching the file for the `hsqs` magic. The runtime's own code
-contains those four bytes, so a naive search hits a false positive and slices out
-a crippled runtime that starts but segfaults on `--appimage-extract`. Every
+The runtime length comes from the AppImage's own reported `--appimage-offset`, not
+from searching the file for the `hsqs` magic. The runtime's own code contains
+those four bytes, so a naive search hits a false positive and slices out a
+crippled runtime that starts but segfaults on `--appimage-extract`. Every
 candidate must pass a round-trip check (rebuilt offset matches what it reports,
 and extraction exits 0) before it is accepted.
 
@@ -362,8 +367,8 @@ arch), so keeping it in one place is more reliable than three. The config is
 | Extraction scratch | `~/.cache/appimage-manager/extract/` |
 
 The launcher directory follows the XDG spec (`$XDG_DATA_HOME`) and takes
-precedence over `/usr/share/applications` in the menu search order, so a
-per-user launcher overrides a system-wide entry of the same name.
+precedence over `/usr/share/applications` in the menu search order, so a per-user
+launcher overrides a system-wide entry of the same name.
 
 ## Project structure
 
@@ -414,27 +419,34 @@ cancellable progress bar. Writing a `.desktop` file takes milliseconds and runs
 synchronously.
 
 **Transaction boundaries are kept short.** All the concurrency happens before the
-transaction; inside it there is nothing but file operations. That keeps how long
-a transaction is held predictable, and removes the need to handle concurrency
-inside one.
+transaction; inside it there is nothing but file operations. That keeps how long a
+transaction is held predictable, and removes the need to handle concurrency inside
+one.
 
-**Every automatic repair is reversible.** The original is backed up first,
-history is append-only, and a restore is itself a new record, so the history
-never ends up inconsistent with the files.
+**Every automatic repair is reversible.** The original is backed up first, history
+is append-only, and a restore is itself a new record, so the history never ends up
+inconsistent with the files.
+
+**Translation does not bring in gettext.** The 570 UI strings live in a table in
+`src/i18n.vala`, compiled into the binary. That removes any need for `.po` files
+and `msgfmt`, keeping a layer of dependencies out of CI and all three distro
+packages. A missing entry falls back to Chinese rather than rendering blank. The
+trade-off is that the community cannot use .po tooling; translations have to be
+made as code changes.
 
 ## Known limitations
 
-- `--appimage-extract` requires the file to be executable. This tool never
-  changes your AppImages on its own: when it meets a file without the executable
-  bit it asks, and the default answer is to leave it alone. Files under `/opt`
-  or `/media` may need administrator rights, in which case setting the bit fails
-  and it says so rather than pretending it worked
-- Unpacking can be slow, tens of seconds to minutes for a large file. The
-  timeout is configurable (60 seconds by default, range 5 to 600) and it can be
-  cancelled at any time. Cancelling or timing out kills the child process
-  outright, leaving nothing running
-- Encrypted and split (`.part`) AppImages are not supported for icon extraction
-  or unpacking
+- `--appimage-extract` requires the file to be executable. This tool never changes
+  your AppImages on its own: when it meets a file without the executable bit it
+  asks, and the default answer is to leave it alone. Files under `/opt` or `/media`
+  may need administrator rights, in which case setting the bit fails and it says
+  so rather than pretending it worked
+- Unpacking can be slow, tens of seconds to minutes for a large file. The timeout
+  is configurable (60 seconds by default, range 5 to 600) and it can be cancelled
+  at any time. Cancelling or timing out kills the child process outright, leaving
+  nothing running
+- Encrypted and split (`.part`) AppImages are not supported for icon extraction or
+  unpacking
 - Launcher directories outside `~/.local/share/applications` are not managed. A
   launcher living elsewhere can be claimed, but scanning will not see it, and
   claiming asks about that
@@ -444,7 +456,7 @@ never ends up inconsistent with the files.
 
 GPL-3.0, see [LICENSE](LICENSE).
 
-The source in this repository is the complete source. Distributing a binary (deb
-/ rpm / arch package, AppImage, tarball) requires making the corresponding
-complete source available. Every tagged Release reproduces the full source for
-that version: clone and `git checkout <sha>`.
+The source in this repository is the complete source. Distributing a binary (deb /
+rpm / arch package, AppImage, tarball) requires making the corresponding complete
+source available. Every tagged Release reproduces the full source for that
+version: clone and `git checkout <sha>`.
