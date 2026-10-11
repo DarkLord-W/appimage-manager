@@ -25,6 +25,33 @@ AUR 仓库里只放四个文件，其余一律不放（准则要求，二进制�
 前置条件：该版本的 GitHub Release **已经发布**（PKGBUILD 要从 Release 下载源码包
 并写死校验和，Release 不存在的话 URL 就是死链）。
 
+### 路线 A：GitHub Actions（推荐）
+
+手动触发 **Actions → Publish to AUR → Run workflow**。
+
+选这条的理由：
+
+- `.SRCINFO` 必须由 `makepkg` 生成，而 `makepkg` 只有 Arch 有。本地开发机
+  不是 Arch，只能用 `scripts/gen-srcinfo.sh` 替代，格式对不对当场验证不了。
+  Actions 里起的是 `archlinux:base-devel` 容器，用的是真 `makepkg`。
+- 私钥存在仓库 Secrets 里，不需要配到任何一台开发机上。
+- 推之前会先 **`makepkg -s` 真构建一遍**，把「校验和填错」「源码包下不来」
+  「build/package 坏了」这类问题挡在推送之前 —— 这些错如果推到 AUR，
+  是**所有 Arch 用户**装的时候才炸。
+
+需要配一次性 Secret：
+
+```
+设置 → Secrets and variables → Actions → New repository secret
+  名称：AUR_SSH_PRIVATE_KEY
+  值：  AUR 专用私钥的全文（含 BEGIN / END 两行）
+```
+
+workflow 里有两个输入：`version`（留空则读 `src/version.vala`）和
+`dry_run`（只验证不推送）。
+
+### 路线 B：本地脚本
+
 ```bash
 # 1. 确认 src/version.vala 里的版本号已经对应上要发布的 tag
 # 2. 发布 Release：先推 main 触发 CI，绿了再打 tag
@@ -36,6 +63,10 @@ scripts/publish-aur.sh
 生成 `.SRCINFO` → 克隆 AUR 仓库 → **显式设置本地 git 身份** → 推送到 `master`。
 
 只想看过程不推送：`AUR_DRY_RUN=1 scripts/publish-aur.sh`
+
+本地脚本用的是**你这台机器上的私钥**，所以得先把 AUR 的 SSH 配好（见上一节）。
+本机没有 `makepkg` 时它会退回 `scripts/gen-srcinfo.sh`，那种情况下建议先用
+路线 A 的 `dry_run` 跑一次，让 CI 用真 `makepkg` 验证格式。
 
 ## 首次提交前的一次性准备
 

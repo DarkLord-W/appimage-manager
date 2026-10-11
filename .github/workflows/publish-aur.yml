@@ -1,0 +1,144 @@
+name: Publish to AUR
+
+# 把当前版本发布到 AUR（Arch 用户仓库）。
+#
+# 手动触发：GitHub → Actions → Publish to AUR → Run workflow
+#
+# 为什么用 GitHub Actions 而不是本地脚本：
+#   · AUR 的 .SRCINFO 必须由 makepkg 生成，而 makepkg 只有 Arch 有。
+#     本地（Kali）没有，只能用替代生成器，格式对不对当场验证不了。
+#     这里起 archlinux:base-devel 容器，用真 makepkg。
+#   · 私钥存在仓库 Secrets 里，不需要配到任何一台开发机上。
+#
+# 关于「要不要自动化」：AUR 准则允许自动化，但明确警告「自动更新 PKGBUILD
+# 的风险自负，出问题的账号和包可能被无预警删除」，理由是上游可能改许可证、
+# 增删依赖，这些得有人过目。所以这里做成**手动触发** —— 执行是自动的，
+# 但每次都要人点一下，顺带看一眼依赖和许可证有没有变。
+#
+# 需要配置的 Secret：
+#   AUR_SSH_PRIVATE_KEY   AUR 专用私钥的全文（含 BEGIN/END 两行）
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '要发布的版本号（如 1.0.0）。留空则读 src/version.vala'
+        required: false
+        default: ''
+      dry_run:
+        description: '只准备和验证，不真的推到 AUR'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: 构建验证并发布
+    runs-on: ubuntu-latest
+    # 要在真 Arch 里跑：makepkg / namcap / pacman 都只有那有
+    container: archlinux:base-devel
+    timeout-minutes: 30
+
+    steps:
+      - name: 装依赖
+        run: |
+          pacman -Syu --noconfirm --needed \
+            git openssh curl namcap sudo
+
+      - uses: actions/checkout@v4
+
+      # ── 准备一个非 root 用户 ────────────────────────────────────────
+      #
+      # makepkg 拒绝以 root 运行（怕把系统搞坏）。容器里默认就是 root，
+      # 所以整条流程都交给 builder 用户跑。
+      - name: 建 builder 用户并配好 SSH
+        run: |
+          set -euo pipefail
+          useradd -m builder
+          install -d -m 700 -o builder -g builder /home/builder/.ssh
+
+          printf '%s\n' "${{ secrets.AUR_SSH_PRIVATE_KEY }}" \
+            > /home/builder/.ssh/id_aur
+          chmod 600 /home/builder/.ssh/id_aur
+
+          # known_hosts：先从网络取一次，避免首次连接时交互式确认。
+          # 取不到就直接失败，不要用 StrictHostKeyChecking=no 糊过去 ——
+          # 那等于关掉中间人防护。
+          ssh-keyscan -t rsa,ecdsa,ed25519 aur.archlinux.org \
+            > /home/builder/.ssh/known_hosts 2>/dev/null
+          [ -s /home/builder/.ssh/known_hosts ] || {
+            echo "::error::取不到 aur.archlinux.org 的 host key"; exit 1; }
+
+          cat > /home/builder/.ssh/config <<'EOF'
+          Host aur.archlinux.org
+            IdentityFile ~/.ssh/id_aur
+            User aur
+            StrictHostKeyChecking yes
+          EOF
+          chmod 600 /home/builder/.ssh/config
+          chown -R builder:builder /home/builder/.ssh
+
+          # 检出目录归 builder，并且让 git 认它（容器里属主变了会被判成
+          # dubious ownership 而拒绝操作）
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          su builder -c "git config --global --add safe.directory '$GITHUB_WORKSPACE'"
+          su builder -c "git config --global --add safe.directory '*'"
+
+      # ── 验证凭据 ────────────────────────────────────────────────────
+      #
+      # 先确认私钥真能连上 AUR。否则要等到最后一步推送才发现密钥配错，
+      # 那时包已经构建完了，白等一轮。
+      - name: 验证 SSH 凭据
+        run: |
+          set -euo pipefail
+          out="$(su builder -c 'ssh -o BatchMode=yes -T aur@aur.archlinux.org' 2>&1 || true)"
+          echo "$out"
+          case "$out" in
+            *"Successfully authenticated"*|*"Interactive shell is disabled"*) ;;
+            *) echo "::error::AUR 拒绝了这把密钥。检查 AUR 账号里有没有上传对应的公钥。"
+               exit 1;;
+          esac
+
+      # ── 先真构建一遍 ────────────────────────────────────────────────
+      #
+      # 这一步的价值：能在推给 AUR 之前就发现「校验和填错了」「源码包
+      # 下不下来」「build/check/package 哪一步坏了」。这些错如果推到
+      # AUR，是**所有 Arch 用户**装的时候才炸。
+      - name: 构建验证（makepkg + namcap）
+        run: |
+          set -euo pipefail
+          su builder -c "cd '$GITHUB_WORKSPACE/packaging/aur' && \
+            makepkg -s --noconfirm --cleanbuild"
+
+          echo "── 产物 ──"
+          ls -la "$GITHUB_WORKSPACE"/packaging/aur/*.pkg.tar.zst
+
+          echo "── namcap 包检查 ──"
+          su builder -c "cd '$GITHUB_WORKSPACE/packaging/aur' && \
+            namcap *.pkg.tar.zst" || true
+
+          echo "── 包内容 ──"
+          tar --zstd -tf "$GITHUB_WORKSPACE"/packaging/aur/*.pkg.tar.zst | sed 's/^/  /'
+
+      # ── 发布 ────────────────────────────────────────────────────────
+      - name: 发布到 AUR
+        env:
+          AUR_DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
+        run: |
+          set -euo pipefail
+          VER="${{ inputs.version }}"
+          if [ -n "$VER" ]; then
+            su builder -c "cd '$GITHUB_WORKSPACE' && scripts/publish-aur.sh '$VER'"
+          else
+            su builder -c "cd '$GITHUB_WORKSPACE' && scripts/publish-aur.sh"
+          fi
+
+      - name: 结果
+        if: success() && !inputs.dry_run
+        run: |
+          echo "✓ 已推送到 AUR"
+          echo "  https://aur.archlinux.org/packages/appimage-manager"
+          echo "  （AUR 索引有几秒延迟，刚推完可能还看不到）"
