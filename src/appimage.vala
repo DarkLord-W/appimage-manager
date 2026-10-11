@@ -1,4 +1,7 @@
 /*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-FileCopyrightText: 2026 DarkLord-W
+ *
  * appimage.vala — AppImage 元数据与图标提取
  *
  * 流程：<AppImage> --appimage-extract → 读 squashfs-root 内的 .desktop 与图标。

@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 #
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 DarkLord-W
+#
 # ui-test.sh — UI + on-disk integration test for AppImage Manager (GTK3).
 #
 # Drives the real GUI inside a PRIVATE Xvfb display (with xfwm4) using

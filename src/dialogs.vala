@@ -1,4 +1,7 @@
 /*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-FileCopyrightText: 2026 DarkLord-W
+ *
  * dialogs.vala — 对话框集合
  *
  * 全部以静态工厂函数提供，返回 Gtk.Dialog（或其子类）。

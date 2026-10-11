@@ -1,4 +1,7 @@
 /*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-FileCopyrightText: 2026 DarkLord-W
+ *
  * paths.vala — XDG 路径解析与 AppImage 路径工具
  *
  * 集中处理所有路径相关逻辑，避免散落在各模块里。

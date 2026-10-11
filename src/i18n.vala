@@ -1,4 +1,7 @@
 /*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-FileCopyrightText: 2026 DarkLord-W
+ *
  * 中英文界面切换。
  *
  * 为什么不用 gettext：

@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 #
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 DarkLord-W
+#
 # ui-helpers.sh — shared shell helpers for tests/ui-test.sh
 #
 # Sourced, never executed directly. All helpers assume the caller has set:

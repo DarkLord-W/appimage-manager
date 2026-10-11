@@ -125,7 +125,7 @@ vendor: DarkLord-W
 
 homepage: https://github.com/DarkLord-W/appimage-manager
 
-license: GPL-3.0
+license: GPL-3.0-or-later
 
 # 第一行是单行摘要：rpm 拿它当 Summary，deb 拿它当 synopsis。
 description: |

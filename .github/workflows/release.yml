@@ -8,7 +8,7 @@ name: Release
 #   · pkg.tar.zst     Arch / Manjaro
 #   · src.tar.gz      源码（发行版打包者用，GPL 对应源码）
 #   · SHA256SUMS      校验和
-#   · README-免安装说明.txt
+#   · README-install.txt
 #
 # 几个容易出错的点，代码里都有对应断言挡着：
 #   · nfpm 配置里的 version 是写死的，必须从 tag 生成临时配置；
@@ -170,7 +170,7 @@ jobs:
           #   塞进 tar 包：会破坏包内 usr/ 前缀的干净结构。
           # 之前正是写在暂存目录里，内容还自称「需要从 Release 页面单独
           # 下载」，而 files: 列表里根本没有它 —— 永远发不出去。
-          cat > "dist/README-免安装说明.txt" <<EOF
+          cat > "dist/README-install.txt" <<EOF
           AppImage Manager $V （免安装版）
 
           解压后直接运行，不需要 root：
@@ -397,14 +397,14 @@ jobs:
         run: |
           set -euo pipefail
           cd dist
-          # README-免安装说明.txt 和 SHA256SUMS 单独放 —— 它们是给人看的
+          # README-install.txt 和 SHA256SUMS 单独放 —— 它们是给人看的
           # 说明与校验数据，不属于可执行内容，塞进 tar 包里反而会挡住
           # usr/ 前缀的干净结构。
           #
           # 用显式清单而不是再 glob 一次：漏掉任何一项都是「资产少了但
           # Release 看着正常」这种最难发现的错。
           ls -1 *.AppImage *.tar.gz *.deb *.rpm *.pkg.tar.zst \
-                SHA256SUMS README-免安装说明.txt > /tmp/artifact_list
+                SHA256SUMS README-install.txt > /tmp/artifact_list
           sort -o /tmp/artifact_list /tmp/artifact_list
           cat /tmp/artifact_list | sed 's/^/  /'
           echo "count=$(wc -l < /tmp/artifact_list)" >> "$GITHUB_OUTPUT"
@@ -433,7 +433,7 @@ jobs:
             echo "| \`appimage-manager-$V-src.tar.gz\` | 源码（发行版打包者用） |"
             echo
             echo "另有 \`SHA256SUMS\`（校验和，\`sha256sum -c SHA256SUMS\` 可验全部）"
-            echo "和 \`README-免安装说明.txt\`（tar.gz 版的用法说明）。"
+            echo "和 \`README-install.txt\`（tar.gz 版的用法说明）。"
             echo
             echo "原生二进制与 AppImage 都**依赖系统的 GTK3**（桌面发行版基本都有）。"
             echo "用 deb/rpm/arch 包时依赖会自动被声明并装好。"
@@ -468,5 +468,5 @@ jobs:
             dist/*.rpm
             dist/*.pkg.tar.zst
             dist/SHA256SUMS
-            dist/README-免安装说明.txt
+            dist/README-install.txt
           fail_on_unmatched_files: true

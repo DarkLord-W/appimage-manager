@@ -1,4 +1,7 @@
 /*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-FileCopyrightText: 2026 DarkLord-W
+ *
  * journal.vala — 事务日志（WAL）与崩溃恢复
  *
  * 两阶段提交：

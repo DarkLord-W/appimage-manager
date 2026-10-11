@@ -1,0 +1,51 @@
+# Maintainer: DarkLord-W <42199147+DarkLord-W@users.noreply.github.com>
+
+pkgname=appimage-manager
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Scan for AppImages and create and maintain their desktop launchers"
+arch=('x86_64')
+url="https://github.com/DarkLord-W/appimage-manager"
+license=('GPL-3.0-or-later')
+
+depends=('gtk3' 'json-glib')
+makedepends=('vala' 'pkgconf')
+checkdepends=('desktop-file-utils')
+
+# 源包是 GitHub Release 里的确定性产物（git archive 生成，
+# .gitattributes 的 export-ignore 排掉了截图和 CI 配置）。
+#
+# 不用 GitHub 自动生成的 <tag>.tar.gz：那种包的校验和会变，AUR 不能接受 ——
+# 用户会莫名其妙地校验失败。
+#
+# 左侧重命名成 $pkgname-$pkgver.tar.gz 是惯例；解包后顶层目录是
+# appimage-manager-$pkgver/，和下面 cd 的路径对上。
+source=("$pkgname-$pkgver.tar.gz::https://github.com/DarkLord-W/appimage-manager/releases/download/v$pkgver/$pkgname-$pkgver-src.tar.gz")
+sha256sums=('0000000000000000000000000000000000000000000000000000000000000000')
+
+build() {
+    cd "$pkgname-$pkgver"
+    make
+}
+
+check() {
+    cd "$pkgname-$pkgver"
+    # 258 项引擎自测，不需要图形环境。夹具由 make selftest 自己生成。
+    make selftest
+}
+
+package() {
+    cd "$pkgname-$pkgver"
+    make install DESTDIR="$pkgdir" PREFIX=/usr
+
+    # make install 会对着 $pkgdir 跑 gtk-update-icon-cache 和
+    # update-desktop-database（Makefile 里那两行，带 || true）。产出的是
+    # 指向**构建目录**的缓存文件，打进包里会覆盖掉用户机器上正确的缓存。
+    # pacman 的钩子（gtk-icon-cache / update-desktop-database）在安装时
+    # 会重新生成，所以这里删掉。
+    rm -f "$pkgdir/usr/share/applications/mimeinfo.cache" \
+          "$pkgdir/usr/share/icons/hicolor/icon-theme.cache"
+
+    # 本程序的 GPL 副本。GPL-3.0 要求分发二进制时附带许可证全文。
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

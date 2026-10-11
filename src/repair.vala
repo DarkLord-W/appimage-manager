@@ -1,4 +1,7 @@
 /*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-FileCopyrightText: 2026 DarkLord-W
+ *
  * repair.vala — 修复执行与差异生成
  *
  * 事务流程见 journal.vala。本文件负责：

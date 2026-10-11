@@ -1,4 +1,7 @@
 /*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-FileCopyrightText: 2026 DarkLord-W
+ *
  * store.vala — 数据模型
  *
  * AppEntry 把「扫描到的 AppImage」和「已存在的 .desktop」关联起来，

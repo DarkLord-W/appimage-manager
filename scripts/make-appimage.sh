@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 #
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 DarkLord-W
+#
 # make-appimage.sh — 手工打包便携 AppImage（runtime + squashfs）
 #
 # 本机没有 appimagetool，也不允许联网，所以不走常规打包工具链：

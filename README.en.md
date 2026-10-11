@@ -454,7 +454,17 @@ made as code changes.
 
 ## License
 
-GPL-3.0, see [LICENSE](LICENSE).
+GPL-3.0-or-later, full text in [LICENSE](LICENSE).
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version. This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
+details.
+
+Each source file carries an `SPDX-License-Identifier: GPL-3.0-or-later` tag.
 
 The source in this repository is the complete source. Distributing a binary (deb /
 rpm / arch package, AppImage, tarball) requires making the corresponding complete

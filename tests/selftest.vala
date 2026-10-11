@@ -1,4 +1,7 @@
 /*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-FileCopyrightText: 2026 DarkLord-W
+ *
  * selftest.vala — 核心引擎自测程序（不依赖 GUI）
  *
  * 直接驱动 scanner / desktopfiles / rules / repair，

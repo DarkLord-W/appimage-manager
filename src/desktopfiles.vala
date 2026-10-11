@@ -1,4 +1,7 @@
 /*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-FileCopyrightText: 2026 DarkLord-W
+ *
  * desktopfiles.vala — .desktop 条目的解析、匹配、生成与删除
  *
  * 这里是本工具与 XDG 启动器体系交互的核心。

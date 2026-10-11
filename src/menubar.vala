@@ -1,4 +1,7 @@
 /*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-FileCopyrightText: 2026 DarkLord-W
+ *
  * menubar.vala — 主窗口菜单栏
  *
  * 用传统的 Gtk.MenuBar 替代原来的汉堡菜单按钮：

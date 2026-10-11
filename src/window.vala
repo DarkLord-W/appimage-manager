@@ -1,4 +1,7 @@
 /*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-FileCopyrightText: 2026 DarkLord-W
+ *
  * window.vala — 主窗口
  *
  * 结构：
@@ -2553,8 +2556,10 @@ public class MainWindow : Gtk.ApplicationWindow {
         dlg.set_program_name ("AppImage Manager");
         dlg.set_version (APPMGR_VERSION);
         dlg.set_comments (I18n.s ("扫描 AppImage、管理目录并创建与修复桌面启动器"));
-        // GPL-3.0，与仓库里的 LICENSE 一致。原来写的 MIT_X11 是错的 ——
-        // 源码都按 GPL-3.0 发布了，关于对话框却告诉别人 MIT。
+        // GPL-3.0-or-later。Gtk.License.GPL_3_0 的语义就是「第 3 版或更高」，
+        // 与 LICENSE、源码 SPDX 头和 README 的声明一致。
+        // 原来写的 MIT_X11 是错的 —— 源码都按 GPL-3.0 发布了，
+        // 关于对话框却告诉别人 MIT。
         dlg.set_license_type (Gtk.License.GPL_3_0);
         dlg.set_logo_icon_name ("appimage-manager");
         dlg.set_copyright (I18n.s ("GPL-3.0 许可"));

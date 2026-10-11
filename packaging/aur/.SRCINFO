@@ -1,0 +1,16 @@
+pkgbase = appimage-manager
+	pkgdesc = Scan for AppImages and create and maintain their desktop launchers
+	pkgver = 1.0.0
+	pkgrel = 1
+	url = https://github.com/DarkLord-W/appimage-manager
+	arch = x86_64
+	license = GPL-3.0-or-later
+	checkdepends = desktop-file-utils
+	makedepends = vala
+	makedepends = pkgconf
+	depends = gtk3
+	depends = json-glib
+	source = appimage-manager-1.0.0.tar.gz::https://github.com/DarkLord-W/appimage-manager/releases/download/v1.0.0/appimage-manager-1.0.0-src.tar.gz
+	sha256sums = 0000000000000000000000000000000000000000000000000000000000000000
+
+pkgname = appimage-manager

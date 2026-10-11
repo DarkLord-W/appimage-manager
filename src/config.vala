@@ -1,4 +1,7 @@
 /*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-FileCopyrightText: 2026 DarkLord-W
+ *
  * config.vala — 配置读写（~/.config/appimage-manager/config.ini）
  *
  * 使用 GLib.KeyFile，不引入额外依赖。

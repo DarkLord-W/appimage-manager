@@ -390,7 +390,14 @@ tests/
 
 ## 许可证
 
-GPL-3.0，见 [LICENSE](LICENSE)。
+GPL-3.0-or-later，全文见 [LICENSE](LICENSE)。
+
+本程序是自由软件：你可以按自由软件基金会发布的 GNU 通用公共许可证条款
+重新分发和/或修改它，条款版本为第 3 版或（由你选择的）任何更新的版本。
+本程序基于「有用」而分发，但不提供任何担保，甚至不包含可商售性或适合特定
+用途的默示担保。详见 GNU 通用公共许可证。
+
+各源文件头部有 `SPDX-License-Identifier: GPL-3.0-or-later` 标记。
 
 仓库里的源码就是完整源码。分发二进制（deb / rpm / arch 包、AppImage、
 tar.gz）时需要同时提供对应版本的完整源码，打 tag 的每个 Release 都能还原出

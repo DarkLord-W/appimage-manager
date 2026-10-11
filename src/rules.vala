@@ -1,4 +1,7 @@
 /*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-FileCopyrightText: 2026 DarkLord-W
+ *
  * rules.vala — .desktop 健康检查规则引擎
  *
  * 关键约束：BOM / CRLF / 非法编码会让 GKeyFile 直接解析失败，

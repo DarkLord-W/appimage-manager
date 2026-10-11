@@ -1,4 +1,7 @@
 /*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-FileCopyrightText: 2026 DarkLord-W
+ *
  * version.vala — 版本号
  *
  * 单独成文件，让核心引擎不必依赖 GUI 入口（main.vala）就能编译，

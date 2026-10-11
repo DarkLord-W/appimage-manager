@@ -1,4 +1,7 @@
 /*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-FileCopyrightText: 2026 DarkLord-W
+ *
  * prefill.vala — 从 AppImage 文件名推导 .desktop 的预填字段
  *
  * 纯逻辑模块：不做界面、不写文件（唯一例外是 find_local_icon ()，

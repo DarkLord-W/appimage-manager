@@ -1,4 +1,7 @@
 /*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-FileCopyrightText: 2026 DarkLord-W
+ *
  * pill.vala — 状态药丸渲染器
  *
  * 两种实现并存，窗格按需选用：

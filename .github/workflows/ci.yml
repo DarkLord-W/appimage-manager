@@ -90,6 +90,57 @@ jobs:
           path: build.log
           retention-days: 14
 
+  aur-check:
+    name: AUR 打包文件校验
+    # 在真的 Arch 环境里跑，因为要用的两个工具只有 Arch 有：
+    #   makepkg --printsrcinfo  .SRCINFO 的权威生成方式
+    #   namcap                  PKGBUILD 的规范检查
+    #
+    # 存在的意义：本项目的 .SRCINFO 是 scripts/gen-srcinfo.sh 生成的
+    # （开发机不是 Arch，没有 makepkg）。那个脚本只要格式差一个空格或
+    # 少一个字段，AUR 就会拒收 —— 而这种事只有真跑一遍 makepkg 才知道。
+    # 所以这里拿两边的输出做逐字节对比。
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    timeout-minutes: 20
+
+    steps:
+      - name: 安装依赖
+        run: |
+          pacman -Syu --noconfirm --needed git namcap
+
+      - uses: actions/checkout@v4
+
+      - name: 用真 makepkg 生成 .SRCINFO 并比对
+        run: |
+          set -euo pipefail
+
+          # makepkg 拒绝以 root 运行（怕把系统搞坏），所以建个普通用户。
+          # 容器里默认就是 root，不建的话这步会直接报
+          # "Running makepkg as root is not allowed"。
+          useradd -m builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+
+          su builder -c "cd '$GITHUB_WORKSPACE/packaging/aur' && makepkg --printsrcinfo" \
+              > /tmp/real.SRCINFO
+          echo "── makepkg 生成的 ──"
+          cat /tmp/real.SRCINFO
+
+          if ! diff -u packaging/aur/.SRCINFO /tmp/real.SRCINFO; then
+            echo "::error::.SRCINFO 与 makepkg 的输出不一致。跑 scripts/gen-srcinfo.sh 重新生成再提交。"
+            exit 1
+          fi
+          echo "✓ .SRCINFO 与 makepkg 的输出逐字节一致"
+
+      - name: namcap 检查
+        run: |
+          set -euo pipefail
+          # namcap 的退出码是 0/1/2 分别对应不同级别的问题，
+          # 但 PKGBUILD 模式下它把发现的问题打到 stderr。
+          # 这里只做「有输出就展示」，不让它把构建卡住 ——
+          # 真正该拦的是 .SRCINFO 不一致，那个在上面已经拦了。
+          su builder -c "cd '$GITHUB_WORKSPACE/packaging/aur' && namcap PKGBUILD" || true
+
   package-check:
     name: 打包可用性（不发布）
     # 确认三个发行版的包在每次 push 上都还能构建出来。

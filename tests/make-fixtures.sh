@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 #
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 DarkLord-W
+#
 # make-fixtures.sh — 生成测试用的假 AppImage 和各种「不规范的 .desktop」
 #
 # 用途：验证扫描器、规则引擎、修复流程的真实行为。

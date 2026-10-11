@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 DarkLord-W
+
 PREFIX      ?= /usr/local
 BINDIR      ?= $(PREFIX)/bin
 DATADIR     ?= $(PREFIX)/share
