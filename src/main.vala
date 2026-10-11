@@ -46,6 +46,9 @@ public class AppMgr : Gtk.Application {
         if (window == null) {
             window = new MainWindow (this);
             window.show_all ();
+            // 药丸的状态色要按主题背景亮度挑。必须在 show_all 之后探 ——
+            // 控件没实现之前，它的 style context 里拿不到主题颜色。
+            PillPainter.probe_theme (window);
             window.check_crash_recovery ();
 
             // 首次运行不再弹模态向导 —— 主窗口本身就是空状态引导页

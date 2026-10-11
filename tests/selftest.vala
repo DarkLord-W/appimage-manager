@@ -282,11 +282,14 @@ public int main (string[] args) {
     // 回归测试：Cairo 的 ARGB32 在小端机上是 BGRA 字节序，而 GdkPixbuf
     // 期望 RGBA。若直接在 pixbuf 的缓冲上建 surface，红蓝通道会互换
     // （琥珀色的「新发现」会渲染成青色）。这里逐通道校验。
-    check_pill (ref checks, ref failures, "新发现", 0, "#e5a00d");
-    check_pill (ref checks, ref failures, "已创建", 0, "#2ecc71");
-    check_pill (ref checks, ref failures, "失效",   0, "#e74c3c");
-    check_pill (ref checks, ref failures, "外部",   1, "#3498db");
-    check_pill (ref checks, ref failures, "损坏",   3, "#e74c3c");
+    // 这里比对的是 color_for 的返回值，而不是写死的色值 ——
+    // 状态色现在是主题自适应的（亮/暗两套），写死任一套都会在另一半上失败。
+    // 色值本身合不合格由下面那条对比度断言负责。
+    check_pill (ref checks, ref failures, "新发现", 0, PillPainter.color_for ("新发现", 0));
+    check_pill (ref checks, ref failures, "已创建", 0, PillPainter.color_for ("已创建", 0));
+    check_pill (ref checks, ref failures, "失效",   0, PillPainter.color_for ("失效", 0));
+    check_pill (ref checks, ref failures, "外部",   1, PillPainter.color_for ("外部", 1));
+    check_pill (ref checks, ref failures, "损坏",   3, PillPainter.color_for ("损坏", 3));
 
     /* ══ 9. 端到端：创建启动器 ═══════════════════════════════════
      * 重要：本段会向 AppPath.applications_dir () 写文件。
@@ -1819,6 +1822,50 @@ public int main (string[] args) {
     check (ref checks, ref failures, "没有漏翻译的界面文案", unwrapped.length == 0,
            unwrapped.length == 0 ? ""
              : "%d 条漏了，例如「%s」".printf (unwrapped.length, unwrapped[0]));
+
+    /* ── 状态药丸的对比度 ──
+     *
+     * 药丸的文字和圆点是用状态色以不透明画在**主题背景**上的，
+     * 所以可读性完全取决于「状态色 vs 主题背景」。
+     *
+     * 这里把这条不变量钉死：两套配色（亮背景用 / 暗背景用）里的每个色，
+     * 在那套背景的三种典型取值上都必须达到 WCAG 正文标准的 4.5:1。
+     *
+     * 为什么值得单测：原来只有一套色，是照暗背景挑的，亮背景上实测
+     *   可优化 2.06:1、已创建 1.93:1
+     * —— 也就是在**任何**亮色主题下药丸都看不清。而用哪个主题由系统决定，
+     * 改一次配色就可能悄悄把某一边弄坏，靠肉眼在一种主题下试是发现不了的。
+     */
+    string[] light_bgs = { "#ffffff", "#f6f5f4", "#e8e8e8" };
+    string[] dark_bgs  = { "#282a33", "#1e1e24", "#2b2b2b" };
+    var pal = PillPainter.palette_for_test ();
+    int pal_bad = 0;
+    string pal_worst = "";
+    double pal_worst_ratio = 99.0;
+    for (uint k = 0; k + 2 < pal.length; k += 3) {
+        string name  = pal[k];
+        string hex   = pal[k + 1];
+        bool   light = pal[k + 2] == "light";
+        var bgs = light ? light_bgs : dark_bgs;
+
+        foreach (var bg in bgs) {
+            double a = PillPainter.luminance_of (PillPainter.parse (hex));
+            double b = PillPainter.luminance_of (PillPainter.parse (bg));
+            double hi = a > b ? a : b;
+            double lo = a > b ? b : a;
+            double r = (hi + 0.05) / (lo + 0.05);
+            if (r < pal_worst_ratio) {
+                pal_worst_ratio = r;
+                pal_worst = "%s %s on %s".printf (name, hex, bg);
+            }
+            if (r < 4.5)
+                pal_bad++;
+        }
+    }
+    check (ref checks, ref failures, "状态药丸在亮/暗背景上都够对比度",
+           pal_bad == 0,
+           pal_bad == 0 ? "" : "%d 组低于 4.5:1".printf (pal_bad));
+    stdout.printf ("      （最差一组 %.2f:1，%s）\n", pal_worst_ratio, pal_worst);
 
     // 常量间接引用的文案也要有译文。
     //
