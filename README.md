@@ -275,7 +275,7 @@ make appimage
 # → dist/AppImage-Manager-1.1.0-x86_64.AppImage
 ```
 
-成品 0.5 到 1.3 MB 不等，取决于用哪个 runtime。runtime 是 AppImage 格式的启动器
+成品 0.4 到 1.2 MB 不等，取决于用哪个 runtime。runtime 是 AppImage 格式的启动器
 （AppImage 就是 `ELF runtime ++ squashfs` 两段拼起来），本项目不构建它：本地
 `make appimage` 从这台机器上已有的 AppImage 里截一个（常见的经典 runtime 约
 180 KB），发布版的 CI 用 AppImageKit 官方的 type2-runtime，944 KB，musl 静态、

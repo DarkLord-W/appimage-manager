@@ -317,7 +317,7 @@ make appimage
 # → dist/AppImage-Manager-1.1.0-x86_64.AppImage
 ```
 
-The result lands between 0.5 and 1.3 MB depending on which runtime it uses. The
+The result lands between 0.4 and 1.2 MB depending on which runtime it uses. The
 runtime is the AppImage launcher (an AppImage is `ELF runtime ++ squashfs`), and
 this project does not build it. A local `make appimage` carves one out of an
 AppImage already on the machine, typically the classic runtime at around 180 KB;
