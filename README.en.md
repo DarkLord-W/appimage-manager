@@ -71,8 +71,8 @@ The AppImage and tarball builds use the GTK3 already on your system; every
 desktop distribution has it. The deb / rpm / arch packages declare the
 dependency, so installing them pulls it in.
 
-On Arch you can also use the AUR: `appimage-manager` builds from source and
-runs the test suite; `appimage-manager-bin` unpacks the released AppImage and
+On Arch you can also use the AUR: `appimage-manager-gtk` builds from source and
+runs the test suite; `appimage-manager-gtk-bin` unpacks the released AppImage and
 installs in seconds. Both install the same set of files and conflict with each
 other, so pick one. The binaries themselves are built separately (one in CI,
 one on your machine), so they are not byte-identical.

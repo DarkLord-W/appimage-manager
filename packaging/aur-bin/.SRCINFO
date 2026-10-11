@@ -1,4 +1,4 @@
-pkgbase = appimage-manager-bin
+pkgbase = appimage-manager-gtk-bin
 	pkgdesc = Scan for AppImages and create and maintain their desktop launchers
 	pkgver = 1.1.0
 	pkgrel = 1
@@ -7,9 +7,9 @@ pkgbase = appimage-manager-bin
 	license = GPL-3.0-or-later
 	depends = gtk3
 	depends = json-glib
-	provides = appimage-manager
-	conflicts = appimage-manager
+	provides = appimage-manager-gtk
+	conflicts = appimage-manager-gtk
 	source = AppImage-Manager-1.1.0-x86_64.AppImage::https://github.com/DarkLord-W/appimage-manager/releases/download/v1.1.0/AppImage-Manager-1.1.0-x86_64.AppImage
 	sha256sums = 0000000000000000000000000000000000000000000000000000000000000000
 
-pkgname = appimage-manager-bin
+pkgname = appimage-manager-gtk-bin

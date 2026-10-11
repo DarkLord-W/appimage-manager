@@ -1,6 +1,6 @@
 # AUR 打包文件
 
-这个目录是 [AUR](https://aur.archlinux.org/packages/appimage-manager) 包的源文件。
+这个目录是 [AUR](https://aur.archlinux.org/packages/appimage-manager-gtk) 包的源文件。
 AUR 仓库里只放四个文件，其余一律不放（准则要求，二进制和构建产物会被删号处理）。
 
 | 文件 | 作用 |
@@ -9,6 +9,28 @@ AUR 仓库里只放四个文件，其余一律不放（准则要求，二进制�
 | `.SRCINFO` | 元数据，AUR 网站靠它显示版本和依赖 |
 | `LICENSE` | **0BSD**。授权的是 PKGBUILD 本身，不是这个软件 |
 | `.gitignore` | 白名单式，只放行上面几个 |
+
+## 为什么包名带 `-gtk`
+
+AUR 上 `appimage-manager` 这个名字虽然**数据库里查不到**（网页 404、RPC 返回
+0 条），但它的 **git 仓库还在**，归另一个人：
+
+```
+提交    4deef98 "Initial commit"
+作者    Alexis Lopez Zubieta <contact@azubieta.net>
+日期    2020-08-03
+上游    https://github.com/AppImageCrafters/appimage-manager   （Go 写的同名 CLI）
+```
+
+那个项目后来改名成了 `appimage-cli-tool`，AUR 上也换了名字，旧仓库没清干净。
+后果是：仓库能 clone、**推送一律被拒** —— clone 是只读的，写权限只给原主人。
+
+所以换成了 `appimage-manager-gtk`：既避开那个残留仓库，也说明这是 **GTK 版**，
+和那个 Go 的命令行工具不是一回事。
+
+> 如果哪天 AUR 把残留仓库清掉了，这个名字是可以搬回去的 ——
+> 但要重新发布两个包，而且已经装过 `-gtk` 的用户不会自动跟着迁移，
+> 所以除非有别的理由，没必要折腾。
 
 ## 为什么要放 0BSD 的 LICENSE
 

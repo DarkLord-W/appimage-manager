@@ -1,6 +1,6 @@
 # Maintainer: DarkLord-W <42199147+DarkLord-W@users.noreply.github.com>
 
-pkgname=appimage-manager-bin
+pkgname=appimage-manager-gtk-bin
 pkgver=1.1.0
 pkgrel=1
 pkgdesc="Scan for AppImages and create and maintain their desktop launchers"
@@ -12,8 +12,11 @@ depends=('gtk3' 'json-glib')
 # 和源码版互斥：两个包装的是同一个 /usr/bin/appimage-manager。
 # 用 provides + conflicts 而不是 replaces —— 准则里说 replaces 只在
 # 软件包重命名时用，这里只是同一个软件的不同来源。
-provides=('appimage-manager')
-conflicts=('appimage-manager')
+#
+# 名字指向的是**源码包的 pkgbase**（appimage-manager-gtk）。两个包都叫
+# -gtk 是因为 AUR 上 appimage-manager 被残留仓库占着，详见 README.md。
+provides=('appimage-manager-gtk')
+conflicts=('appimage-manager-gtk')
 
 # 源就是发布出去的 AppImage。没有 build()：里面已经是编译好的产物。
 source=("AppImage-Manager-$pkgver-x86_64.AppImage::https://github.com/DarkLord-W/appimage-manager/releases/download/v$pkgver/AppImage-Manager-$pkgver-x86_64.AppImage")

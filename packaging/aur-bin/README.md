@@ -1,6 +1,6 @@
-# AUR 打包文件：`appimage-manager-bin`
+# AUR 打包文件：`appimage-manager-gtk-bin`
 
-这个目录是 [AUR](https://aur.archlinux.org/packages/appimage-manager-bin) 上
+这个目录是 [AUR](https://aur.archlinux.org/packages/appimage-manager-gtk-bin) 上
 `-bin` 包的源文件。AUR 仓库里只放四个文件，其余一律不放（准则要求，二进制和
 构建产物会被删号处理）：
 
@@ -20,11 +20,11 @@
 两个包并存，装的是同一个程序，所以**互相冲突**，用户二选一：
 
 ```
-provides=('appimage-manager')
-conflicts=('appimage-manager')
+provides=('appimage-manager-gtk')
+conflicts=('appimage-manager-gtk')
 ```
 
-| | `appimage-manager` | `appimage-manager-bin` |
+| | `appimage-manager-gtk` | `appimage-manager-gtk-bin` |
 |---|---|---|
 | 源 | Release 里的源码包 | Release 里的 AppImage |
 | 装的时候 | 拖 `vala` + `pkgconf`（约 100 MB），编译约 1 分钟 | 秒级，只解包 |
@@ -40,8 +40,19 @@ conflicts=('appimage-manager')
 **软件包改名**用的（让 pacman 自动换掉旧包），这里只是同一个软件的不同来源，
 用户应该自己选，不该被悄悄替换。
 
-**为什么允许有 `-bin`**：准则规定「当源码可获得时，那些预构建可以直接部署的
-二进制包应该加上 `-bin` 后缀」。源码包就在旁边，所以合规。
+**`-bin` 后缀是准则的硬性要求**，原文：
+
+> Packages that use prebuilt deliverables, when the sources are available,
+> **must use the `-bin` suffix**.
+
+源码包就在旁边，所以合规。名字里的 `-gtk` 则是因为 AUR 上 `appimage-manager`
+被一个残留的 git 仓库占着，推送一律被拒 —— 原委见
+[`packaging/aur/README.md`](../aur/README.md)。
+
+（AUR 上另有 400 多个包用 `-appimage` 后缀，但那是民间惯例，准则里一次都没
+提过。而且那些包大多是**把 `.AppImage` 文件原样装进去**再软链到 `/usr/bin`；
+我们这个是把 AppImage 解包成普通文件树，用 `-appimage` 反而会让人装完去找一个
+根本不存在的 `.AppImage` 文件。）
 
 ## 关键设计：解包，而不是装 AppImage 本身
 
@@ -63,8 +74,9 @@ conflicts=('appimage-manager')
 它必须和程序里 `set_wmclass()` 的 class 字段一致，否则任务栏图标会退回通用占位图。
 
 **许可证全文。** GPL-3.0 要求分发二进制时附带许可证全文。AppImage 里有
-（`make install` 装的，`/usr/share/licenses/appimage-manager/LICENSE`），
-直接取过来。取不到就**报错退出**，不静默少一个文件。
+（`make install` 装的，AppImage 内的路径是
+`usr/share/licenses/appimage-manager/LICENSE`），直接取过来，装进包的
+`usr/share/licenses/$pkgname/`。取不到就**报错退出**，不静默少一个文件。
 
 **图标。** 装到 `hicolor/256x256/apps/`，靠名字 `appimage-manager` 让主题索引
 去找，和源码版一致。
@@ -75,5 +87,6 @@ conflicts=('appimage-manager')
 故意的 —— 老版本的 `make-appimage.sh` 不装许可证，用它打出来的包会**静默地**
 少一个文件，而 GPL 合规问题不该靠肉眼发现。
 
-所以：**v1.1.0 之前的 AppImage 不能用来构建这个包**，需要对应的 Release
-是用新 `Makefile` 打出来的。
+所以：**v1.1.0 之前的 AppImage 不能用来构建这个包**。那时两个地方都缺 ——
+`Makefile` 的 `install` 目标没装许可证，而 AppImage 的 AppDir 又是
+`make-appimage.sh` 手工拼的、根本不走 `make install`。v1.1.0 起两处都补上了。
