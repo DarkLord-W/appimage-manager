@@ -48,7 +48,7 @@ if [ -z "$VERSION" ]; then
     VERSION="$(sed -n 's/.*APPMGR_VERSION[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
         "$ROOT_DIR/src/version.vala" | head -n 1)"
 fi
-[ -n "$VERSION" ] || VERSION="1.0.0"
+[ -n "$VERSION" ] || VERSION="1.1.0"
 
 # ── 临时工作区 ───────────────────────────────────────────────────────
 # 尊重 $TMPDIR；本机预置了 /tmp/opencode，优先用它
@@ -381,6 +381,16 @@ install -m 0644 "$DATA_DIR/appimage-manager.png" \
     "$APPDIR/appimage-manager.png"
 install -m 0644 "$DATA_DIR/appimage-manager.png" \
     "$APPDIR/usr/share/icons/hicolor/256x256/apps/appimage-manager.png"
+
+# 许可证全文。GPL 要求分发二进制时附带一份。
+#
+# **必须在这里单独装**：AppDir 是这个脚本手工拼的，不走 make install，
+# 所以 Makefile 的 install 目标里装了什么都不影响这里。deb / rpm / arch /
+# tar.gz 那四样走的是 make install，因此它们本来就有 —— 只有 AppImage
+# 曾经整整漏了一版（v1.0.0 打出来的包里就没有，拆开看过）。
+mkdir -p "$APPDIR/usr/share/licenses/appimage-manager"
+install -m 0644 "$ROOT_DIR/LICENSE" \
+    "$APPDIR/usr/share/licenses/appimage-manager/LICENSE"
 
 # 应用按「CWD 下的 data/style.css」回退查找样式表（见 src/window.vala 的 find_css）。
 # AppRun 会 cd 到 AppDir 根。这里放一份实体副本而不是软链接：

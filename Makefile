@@ -15,7 +15,7 @@ PKG_LIBS    := $(shell pkg-config --libs $(PKGS))
 # 这里直接用 valac 的默认搜索路径，只在需要覆盖时才指定
 VAPIDIR     ?=
 CC          ?= gcc
-VERSION     ?= 1.0.0
+VERSION     ?= 1.1.0
 
 # 发行版的打包工具都是通过**环境变量**注入编译参数的，这里必须让它们生效，
 # 否则打包出来会静默地少掉加固和调试信息：

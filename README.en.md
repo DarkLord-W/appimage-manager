@@ -314,7 +314,7 @@ narrow; the ones only it can find are worth running regularly, not on every push
 
 ```bash
 make appimage
-# → dist/AppImage-Manager-1.0.0-x86_64.AppImage
+# → dist/AppImage-Manager-1.1.0-x86_64.AppImage
 ```
 
 The result lands between 0.5 and 1.3 MB depending on which runtime it uses. The

@@ -80,7 +80,7 @@ arch: amd64
 
 platform: linux
 
-# 版本号：写死 1.0.0，必须和 src/version.vala 的 APPMGR_VERSION 保持一致。
+# 版本号：写死 1.1.0，必须和 src/version.vala 的 APPMGR_VERSION 保持一致。
 #
 # 为什么不用模板：nfpm v2.41.0 的 `nfpm package` 只有 --config/--target/
 # --packager 三个参数，**没有 --version**，配置里的值也不走
@@ -96,7 +96,7 @@ platform: linux
 #   sed "s|^version: .*|version: $V|" packaging/nfpm.yaml > build/nfpm.yaml
 #   nfpm package -f build/nfpm.yaml -p deb -t dist/
 #
-version: 1.0.0
+version: 1.1.0
 
 # semver：万一有人把版本写成 1.1.0-rc1，nfpm 会自动拆成
 # Version=1.1.0 + Prerelease=rc1，deb 侧落成 1.1.0~rc1，

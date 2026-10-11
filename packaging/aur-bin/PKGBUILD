@@ -1,7 +1,7 @@
 # Maintainer: DarkLord-W <42199147+DarkLord-W@users.noreply.github.com>
 
 pkgname=appimage-manager-bin
-pkgver=1.0.0
+pkgver=1.1.0
 pkgrel=1
 pkgdesc="Scan for AppImages and create and maintain their desktop launchers"
 arch=('x86_64')
@@ -31,6 +31,11 @@ package() {
     # 直接装的话用户每次运行都要 FUSE 挂载，就得给包加 fuse2 依赖 ——
     # 那是 AppImage 这个**格式**的开销，程序本身根本不需要它。
     # 解出来按正常目录结构装，装完之后和源码版**一模一样**。
+    #
+    # chmod 不能省：makepkg 下载下来的源文件是 0644，没有可执行位，
+    # 直接跑会报 "Permission denied"。那个报错指向 .AppImage 文件本身，
+    # 看着像下载坏了或者文件损坏，其实只是权限。
+    chmod +x "AppImage-Manager-$pkgver-x86_64.AppImage"
     ./"AppImage-Manager-$pkgver-x86_64.AppImage" --appimage-extract >/dev/null
 
     install -Dm755 squashfs-root/usr/bin/appimage-manager \

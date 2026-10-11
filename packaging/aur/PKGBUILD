@@ -1,7 +1,7 @@
 # Maintainer: DarkLord-W <42199147+DarkLord-W@users.noreply.github.com>
 
 pkgname=appimage-manager
-pkgver=1.0.0
+pkgver=1.1.0
 pkgrel=1
 pkgdesc="Scan for AppImages and create and maintain their desktop launchers"
 arch=('x86_64')

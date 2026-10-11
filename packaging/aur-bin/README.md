@@ -75,5 +75,5 @@ conflicts=('appimage-manager')
 故意的 —— 老版本的 `make-appimage.sh` 不装许可证，用它打出来的包会**静默地**
 少一个文件，而 GPL 合规问题不该靠肉眼发现。
 
-所以：**v1.0.0 之前的 AppImage 不能用来构建这个包**，需要对应的 Release
+所以：**v1.1.0 之前的 AppImage 不能用来构建这个包**，需要对应的 Release
 是用新 `Makefile` 打出来的。

@@ -272,7 +272,7 @@ sudo apt install desktop-file-utils xvfb xfwm4 xdotool imagemagick xclip
 
 ```bash
 make appimage
-# → dist/AppImage-Manager-1.0.0-x86_64.AppImage
+# → dist/AppImage-Manager-1.1.0-x86_64.AppImage
 ```
 
 成品 0.5 到 1.3 MB 不等，取决于用哪个 runtime。runtime 是 AppImage 格式的启动器
