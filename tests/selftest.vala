@@ -2066,25 +2066,28 @@ string[] placeholders (string s) {
 /**
  * 占位符是否一一对应。
  *
- * 比的是**多重集**不是顺序：译文完全可以在英文语序里把 "%s ... %d"
- * 调成 "%d ... %s"，只要参数按同样顺序传给 printf 就完全正确。
- * 按位置逐个比会把这种合法改写误判成不匹配。
+ * **必须按顺序比**，不能只比多重集。
+ *
+ * 这里踩过一次大坑：起先把比较改成多重集（认为"英译文为了语序可以调换
+ * 占位符顺序"），于是放过了
+ *     zh = 本次扫描：%s 里共 %d 个 .desktop
+ *     en = This scan: %d .desktop files found in %s
+ * 但代码里传参是按**中文顺序**写的：
+ *     I18n.s ("…%s…%d…").printf (apps_dir, count)
+ * 英文生效时格式串变成 %d 在前，于是 %d 收到一个字符串、%s 收到一个整数
+ * 当指针解引用 —— 点「认领」直接段错误（g_vasprintf 里崩），而中文完全正常。
+ *
+ * 结论：译文可以改语序、可以重写句子，但**占位符的先后顺序不能动**，
+ * 因为它由调用点的传参顺序决定，那是中文那一侧决定的。
  */
 bool same_placeholders (string zh, string en) {
     var a = placeholders (zh);
     var b = placeholders (en);
     if (a.length != b.length)
         return false;
-
-    string kinds = "diouxXeEfFgGaAcspn";
-    for (int i = 0; i < kinds.length; i++) {
-        string key = kinds.substring (i, i + 1).dup ();
-        int ca = 0, cb = 0;
-        for (uint k = 0; k < a.length; k++) if (a[k] == key) ca++;
-        for (uint k = 0; k < b.length; k++) if (b[k] == key) cb++;
-        if (ca != cb)
+    for (uint i = 0; i < a.length; i++)
+        if (a[i] != b[i])
             return false;
-    }
     return true;
 }
 

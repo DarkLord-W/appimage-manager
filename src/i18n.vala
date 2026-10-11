@@ -123,7 +123,22 @@ public class I18n : GLib.Object {
      */
     private static string[]? lazy_table = null;
 
-    private static string[] table () {
+    /**
+     * 返回翻译表。
+     *
+     * **必须是 unowned**。写成 `static string[] table ()` 的话 Vala 认为
+     * 调用方拥有这个数组，会在调用方返回时生成一句
+     *     tbl = (_vala_array_free (tbl, n, g_free), NULL);
+     * 把整张表连同里面每一个字符串全部释放掉。
+     *
+     * 也就是说第一次查表就把表毁了，之后每次查表都在读已释放内存：
+     * 轻则返回乱码，重则段错误。实测的表现是「英文界面点认领必崩、
+     * 中文完全正常」—— 因为中文分支在调 table() 之前就 return 了，
+     * 根本没碰到这段。
+     *
+     * 这个坑编译不报错、警告也没有，只有跑起来才会炸。
+     */
+    private static unowned string[] table () {
         if (lazy_table == null)
             lazy_table = new string[] {
         "文件不存在",
@@ -343,7 +358,7 @@ public class I18n : GLib.Object {
         "已认领 %s",
         "Claimed %s",
         "本次扫描：%s 里共 %d 个 .desktop",
-        "This scan: %d .desktop files found in %s",
+        "This scan: %s contains %d .desktop files",
         "指向 %s",
         "Points to %s",
         "…以及另外 %d 个",
@@ -1302,7 +1317,7 @@ public class I18n : GLib.Object {
         if (Lang.effective () == Lang.ZH)
             return zh;
 
-        var tbl = table ();
+        unowned string[] tbl = table ();
         for (int i = 0; i + 1 < tbl.length; i += 2) {
             if (tbl[i] == zh) {
                 string en = tbl[i + 1];
@@ -1313,13 +1328,13 @@ public class I18n : GLib.Object {
     }
 
     /** 翻译表的全部条目，供 selftest 校验覆盖率 */
-    public static string[] all_entries () {
+    public static unowned string[] all_entries () {
         return table ();
     }
 
     /** 某个中文串在表里有没有条目 —— selftest 扫源码时要跳过表本身 */
     public static bool is_in_table (string zh) {
-        var tbl = table ();
+        unowned string[] tbl = table ();
         for (int i = 0; i + 1 < tbl.length; i += 2)
             if (tbl[i] == zh)
                 return true;
