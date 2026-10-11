@@ -45,7 +45,4 @@ package() {
     # 会重新生成，所以这里删掉。
     rm -f "$pkgdir/usr/share/applications/mimeinfo.cache" \
           "$pkgdir/usr/share/icons/hicolor/icon-theme.cache"
-
-    # 本程序的 GPL 副本。GPL-3.0 要求分发二进制时附带许可证全文。
-    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

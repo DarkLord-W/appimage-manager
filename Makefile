@@ -94,6 +94,13 @@ install: $(BIN)
 	    install -d $(DESTDIR)$(DATADIR)/icons/hicolor/256x256/apps; \
 	    install -m 0644 $(ICON) $(DESTDIR)$(DATADIR)/icons/hicolor/256x256/apps/; \
 	fi
+	# 许可证全文。GPL 要求分发二进制时附带，各发行版也都要求装到
+	# 这个位置（deb 的 debian/copyright 之外还有它，Arch 的
+	# /usr/share/licenses/<pkgname>/，rpm 的 %license）。
+	# 放在 make install 里而不是各打包配置里各写一遍 —— 这一处改了，
+	# deb / rpm / arch / AppImage / tar.gz 五种产物一起就有了。
+	install -d $(DESTDIR)$(DATADIR)/licenses/appimage-manager
+	install -m 0644 LICENSE $(DESTDIR)$(DATADIR)/licenses/appimage-manager/LICENSE
 	gtk-update-icon-cache -f -t $(DESTDIR)$(DATADIR)/icons/hicolor 2>/dev/null || true
 	update-desktop-database $(DESTDIR)$(DATADIR)/applications 2>/dev/null || true
 
@@ -103,6 +110,8 @@ uninstall:
 	rm -f $(DESTDIR)$(DATADIR)/appimage-manager/style.css
 	rmdir --ignore-fail-on-non-empty $(DESTDIR)$(DATADIR)/appimage-manager 2>/dev/null || true
 	rm -f $(DESTDIR)$(DATADIR)/icons/hicolor/256x256/apps/appimage-manager.png
+	rm -f $(DESTDIR)$(DATADIR)/licenses/appimage-manager/LICENSE
+	rmdir --ignore-fail-on-non-empty $(DESTDIR)$(DATADIR)/licenses/appimage-manager 2>/dev/null || true
 
 # ── AppImage ─────────────────────────────────────────────────────────
 # 无网络、无 appimagetool：脚本手工拼「runtime + squashfs」。
