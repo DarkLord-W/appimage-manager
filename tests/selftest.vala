@@ -1820,6 +1820,32 @@ public int main (string[] args) {
            unwrapped.length == 0 ? ""
              : "%d 条漏了，例如「%s」".printf (unwrapped.length, unwrapped[0]));
 
+    // 中英两侧的「控制字符结构」必须一致。
+    //
+    // 踩过的坑：生成翻译表时对英文多转义了一层，源码里中文写 \n（Vala 渲染成
+    // 真换行）、英文写 \\n（渲染成字面的反斜杠+n）。结果是界面上直接显示
+    // "…for AppImages,\nand create…" 这种东西。中文界面看着正常，只有切到
+    // 英文才暴露 —— 63 条译文全中招，而当时所有断言都是绿的。
+    //
+    // 比的是换行/制表符/回车的**个数**，不是具体位置：英文语序可以调，
+    // 但控制字符数量必须对得上，少一个就是转义写错了一层。
+    int ctrl_mismatch = 0;
+    string first_bad = "";
+    for (uint i = 0; i + 1 < tbl.length; i += 2) {
+        var a = count_control (tbl[i]);
+        var b = count_control (tbl[i + 1]);
+        if (a != b) {
+            ctrl_mismatch++;
+            if (first_bad == "")
+                first_bad = "「%s」有 %d 个，译文有 %d 个".printf (
+                    tbl[i].substring (0, int.min (24, tbl[i].length)), a, b);
+        }
+    }
+    check (ref checks, ref failures, "中英控制字符数量一致（转义没写错层）",
+           ctrl_mismatch == 0,
+           ctrl_mismatch == 0 ? "" : "%d 条对不上，例如 %s".printf (
+               ctrl_mismatch, first_bad));
+
     // 反向：表里有、源码里没人用的孤儿条目（提示清理，不算失败）
     var orphan = i18n_orphan_keys ();
     if (orphan.length > 0)
@@ -2298,4 +2324,15 @@ string[] i18n_unwrapped () {
         }
     }
     return leaked.steal ();
+}
+
+/** 字符串里换行/制表/回车的总数 —— 用来比对中英两侧的转义结构 */
+int count_control (string s) {
+    int n = 0;
+    for (int i = 0; i < s.length; i++) {
+        char c = s[i];
+        if (c == '\n' || c == '\t' || c == '\r')
+            n++;
+    }
+    return n;
 }
