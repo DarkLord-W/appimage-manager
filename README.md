@@ -1,262 +1,203 @@
 # AppImage Manager
 
-> **语言 / Language**：[简体中文](README.md) · [English](README.en.md)
-
-一个用 **Vala + GTK3** 写的 AppImage 桌面集成管理器。扫描你指定的目录，把 AppImage 变成规范的 `.desktop` 启动器，并持续维护它们的健康状态。
-
-编译产物是**单个原生二进制**，拷到任何装了 GTK3 的 Linux 上都能直接跑。
-
-## 下载
-
-| 格式 | 适合谁 |
-|---|---|
-| `AppImage-Manager-*-x86_64.AppImage` | 免安装，赋可执行权限后双击即用 |
-| `appimage-manager-*-linux-x86_64.tar.gz` | 想免安装、又要能进应用菜单 |
-| `appimage-manager_*_amd64.deb` | Debian / Ubuntu / Kali / Mint |
-| `appimage-manager-*.x86_64.rpm` | Fedora / RHEL / openSUSE |
-| `appimage-manager-*.pkg.tar.zst` | Arch / Manjaro |
-
-从 [Releases](https://github.com/DarkLord-W/appimage-manager/releases) 下载。
-
-原生二进制与 AppImage 都**依赖系统的 GTK3**（桌面发行版基本都有）。用
-deb / rpm / arch 包时依赖会被自动声明并装好。
-
----
-
-## 界面
-
-### 主界面
+[English](README.en.md) | 简体中文
 
 ![主界面](docs/screenshots/main-window.png)
 
-11 个 AppImage，四种状态一目了然：黄色`新发现`（还没启动器）、橙色`可优化`
-（启动器有问题，带问题数）、蓝色`外部`（别人建的，本工具不管）、
-绿色`已创建`（本工具管理中）。
+AppImage 的好处是不用安装。代价是安装过程替你做的那些事没人做了：写
+`.desktop`、装图标、登记到应用菜单、设置 MimeType 关联，全都得手动来。
+写一个能用的启动器要十几行，还得记住 XDG 的转义规则。写错了图标不显示，
+搜索里找不到，AppImage 挪个位置链接就失效。时间一长
+`~/.local/share/applications` 里就堆满了这种东西。
+
+这个工具扫描你指定的目录，把找到的 AppImage 建成规范的启动器，然后持续
+检查它们还好不好用。发现的问题可以逐条看、逐条修，每次改动都有 diff 预览
+和备份。
+
+Vala + GTK3 写的，编译出来是一个原生二进制。
+
+## 安装
+
+从 [Releases](https://github.com/DarkLord-W/appimage-manager/releases) 下载：
+
+| 文件 | 说明 |
+|---|---|
+| `AppImage-Manager-*-x86_64.AppImage` | 免安装，`chmod +x` 之后直接跑 |
+| `appimage-manager_*_amd64.deb` | Debian / Ubuntu / Kali / Mint |
+| `appimage-manager-*.x86_64.rpm` | Fedora / RHEL / openSUSE |
+| `appimage-manager-*.pkg.tar.zst` | Arch / Manjaro |
+| `appimage-manager-*-linux-x86_64.tar.gz` | 解压即用，不需要 root |
+
+AppImage 和 tar.gz 版依赖系统里已装的 GTK3，桌面发行版都有。deb / rpm /
+arch 包会把依赖声明好，装的时候自动处理。
+
+从源码编译见[编译](#编译)。
+
+## 用法
+
+### 扫描
+
+在「添加目录」里填要扫描的目录，可以填多个，会递归进子目录。列表里的每一行
+是一个 AppImage，右边那列显示它当前的状态。
+
+状态分四种。黄绿色「新发现」是还没有启动器的；橙色「可优化」是启动器存在但
+有问题，后面的数字是问题条数；蓝色「外部」是别的工具或用户手写的启动器，
+本工具不碰；绿色「已创建」是归本工具管的。
+
+筛选下拉框可以只看某一类。搜索框按名称和路径过滤。
 
 ### 创建启动器
+
+勾选要处理的条目，点操作条上的「创建」。
 
 ![创建启动器对话框](docs/screenshots/create-dialog.png)
 
-填完上面几项，下面实时预览**将要写入的 `.desktop` 全文** —— 写之前你就知道
+对话框会根据文件名预填几个字段（`Obsidian-1.5.3-x86_64.AppImage` 会推出
+`Obsidian`），名称、分类、备注、图标都可以改。分类是个可编辑的下拉框，
+输入 `krita` 会建议 `Graphics;`。
+
+下面那块是**将要写入的 `.desktop` 全文**，边改边更新。写进去之前你就知道
 会得到什么。
 
-### 修复问题
+图标默认是空的，点「选择…」从磁盘上挑一张（png / svg / xpm 都行），
+文件会被复制进图标缓存，右边有 32px 预览。批量创建时会逐个弹窗，可以
+「跳过」单条，也可以勾上「之后都用默认值」一次过完。
+
+创建过程不做任何解包。整个流程是纯字符串操作，毫秒级完成，不会卡在某个
+大文件上。想让它读 AppImage 内部的元数据（真实名称、图标、Categories），
+点对话框里的「尝试提取内置元数据」。那一步会解包，所以带了 60 秒硬超时、
+可以随时取消、失败会清理干净并说明原因。
+
+### 检查和修复
+
+选中条目点「修复」，或者直接双击。
 
 ![修复对话框](docs/screenshots/repair-dialog.png)
 
-逐条列出问题、命中了哪条规则、建议怎么改；选保守模式只改必改项，
-选完整模式连冗余键一起清。
+上面列出所有问题，每条都标了命中的规则、当前值、以及打算改成什么。中间选
+修复模式：
+
+- **保守**：只改明确坏掉的，已存在的字段一个字节不动
+- **补全**：在保守的基础上补齐缺失的标准字段，只补不覆盖
+- **重建**：用 AppImage 的元数据整体重写，你自定义的内容要逐条勾选保留
+
+下面勾选要保留哪些现有内容（比如你改过的 `Name`），以及是否规范化文件名。
+最底下是 unified diff，确认之后才会写。
 
 ### 右键菜单
 
+针对单条的操作在这里。
+
 ![右键菜单](docs/screenshots/context-menu.png)
 
-对单条的操作在这里，和常驻操作条（批量）零重叠。
+和上面的常驻操作条分工明确：操作条管批量（创建、修复、认领、图标、删除），
+右键菜单管单条（编辑、测试运行、打开所在目录、复制路径）。浮动操作条也在
+右下角提供这几个单条操作。
 
-### 英文界面
-
-界面文案**全部可翻译**，没有半中半英的混合状态。菜单 `语言` 切换，
-首次启动跟随系统 locale。
-
-| 简体中文 | English |
-|---|---|
-| ![中文界面](docs/screenshots/main-window.png) | ![English UI](docs/screenshots/main-window.en.png) |
-
-<details>
-<summary>其余对话框的英文版</summary>
-
-| | 中文 | English |
-|---|---|---|
-| 创建 | ![](docs/screenshots/create-dialog.png) | ![](docs/screenshots/create-dialog.en.png) |
-| 修复 | ![](docs/screenshots/repair-dialog.png) | ![](docs/screenshots/repair-dialog.en.png) |
-| 右键菜单 | ![](docs/screenshots/context-menu.png) | ![](docs/screenshots/context-menu.en.png) |
-
-</details>
-
----
-
-## 功能
-
-### 扫描
-- 多个扫描目录，递归子目录
-- 按扩展名初筛 + **ELF 魔数 + AppImage "AI" 魔数**双重校验，剔除改成 `.AppImage` 后缀的假货
-- 扫描结果与 `~/.local/share/applications` 里的现有条目自动关联
-
-### 创建启动器
-- 从 AppImage 内部提取真实元数据：`Name` / `Comment` / `Categories` / `StartupWMClass` / `MimeType`
-- 提取内置图标（`.DirIcon` 优先，其次最大尺寸的 png/svg），缩放后缓存到 `hicolor`
-- `Exec` 字段按 XDG 规范**完整转义**（空格加引号、字面 `%` 写成 `%%`、shell 元字符转义）
-- 写入前用 `desktop-file-validate` 校验，校验不过则回滚
-- 原子写入（临时文件 + `fsync` + `rename`），桌面环境永远读不到半截文件
-
-### 健康检查（28 条规则）
-对已有的 `.desktop` 做体检，按严重度分四级：
-
-| 级别 | 例子 |
-|---|---|
-| 🔴 致命 | 缺少 `[Desktop Entry]` 组头、UTF-8 BOM、CRLF 行尾、编码非法字节 |
-| 🔴 严重 | `Version=` 超范围、`Exec=` 未转义、`Exec=` 指向不存在的文件、`Type=` 错误、重复键、悬空 `Actions=` 引用 |
-| 🟡 警告 | `Icon=` 丢失、缺 `Categories=`、缺 `StartupWMClass=`、`Terminal=true`、文件名不规范 |
-| ⚪ 提示 | 缺 `GenericName=`、缺 `TryExec=`、未被本工具管理 |
-
-### 修复（三级模式）
-- **保守** — 只改明确坏掉的，已存在字段一个字节不动
-- **补全** — 保守 + 补齐缺失的标准字段（只补，不覆盖）
-- **重建** — 用 AppImage 元数据整体替换，自定义字段需逐条勾选保留
-
-每个问题都显示「当前值 / 修复值」，改动前有 unified diff 预览。
-
-### 中英双语界面
-
-- 菜单 `语言(L)` 三选一：跟随系统 / 简体中文 / English
-- 首次启动**默认跟随系统 locale**（`LANG`/`LC_MESSAGES` 非 `zh*` 即英文），
-  海外用户装上就是英文，不用先去菜单里翻一遍
-- 切换后弹提示条 +「立即重启」按钮，一次点击生效 —— 用同进程换映像
-  （`execv`）的方式重启，GApplication 的单实例名全程不断，
-  不会出现「点了没反应」或同时跑起两个
-- 570 条文案内置在 `src/i18n.vala` 的对照表里，**编译进二进制**，
-  不依赖 gettext / .po，CI 和三个发行版包都不用多装东西
-- 漏翻的串**退回中文而不是显示空白** —— 界面上永远不会出现空格子
-- GTK 自带控件（文件选择器、颜色选择器）也跟着走：在 GTK 初始化前把
-  `LANGUAGE` 设成对应语言，否则会出现「界面中文、选文件时弹英文对话框」
-  这种割裂 —— 实测踩过
-- 自测里有两道闸门：译文占位符必须与中文一一对应（防 `printf` 越界），
-  且源码里每条中文串要么已包 `I18n.s()`、要么在显式豁免名单里
-  （新加了中文界面文案却忘了翻，自测立刻红）
+目标的选择规则是「勾选优先，没勾选就回退到当前行」。按钮会按状态启用或禁用，
+禁用的原因写在 tooltip 里。
 
 ### 反向管理
-- 删除启动器（删除前自动备份）
-- 编辑 `Name` / `Comment` / `Categories` / `Exec` / `Icon`
-- **认领**：把第三方或手工创建的 `.desktop` 纳入管理，只追加 `X-AppImage-Manager-*` 标记键，原有内容不动
-- **用内置元数据补全**：解包 AppImage，读它内置 `.desktop` 里的真实
-  名称 / 描述 / 分类 / 图标，补全已有的启动器。只替换 AppImage 里
-  确实写了的字段，且只重写值真的变了的那几行 —— 注释、空行、原始空格
-  写法、`[Desktop Action …]` 附加组全部逐字节保留。写前先备份并记入
-  事务，随时可从「修复历史」还原
-- 失效与孤儿清理
 
-### 保真原则
+已经存在的启动器也能交进来管：
 
-凡是改写用户 `.desktop` 的操作（认领、修复、补全），都只动**确认要改
-的那几行**，其余逐字节保留：
-
-- 注释和空行原样留下
-- `Name = Foo` 这种带空格的非标准写法不会被「规范化」掉
-- `[Desktop Action …]` 等附加组完整保留
-- 幂等：同一个操作重复执行不会反复叠加内容
-
-走「解析成键值再整体序列化」的老路会把这些全都吃掉 —— 认领一个精心
-写好的启动器，结果注释没了、附加组整组消失，与「只追加两行标记」的
-承诺直接矛盾。所以这类操作一律走字节级插入 / 行级最小改写。
-
-### 事务与回滚
-- 两阶段提交（WAL），每步操作可追溯
-- 崩溃恢复：启动时检测未完成的事务，可一键回滚
-- 追加式修复历史，任何时候都能还原
-- 备份保留策略（默认 30 天 / 200 个事务）
-
----
-
-## 界面布局
-
-```
-┌ 原生标题栏（由窗口管理器绘制）──────────────────────────────────────┐
-├ 文件(F)  编辑(E)  视图(V)  工具(T)  语言(L)  帮助(H) ──────────────────┤
-├ [⟳ 重新扫描]  [🔍 搜索…]              3 个目录 · 12 个 AppImage … ──┤
-├ 📁 ~/Applications ✕   📁 /opt/apps ✕            [+ 添加目录] ───────┤
-├ [全部▾] ☐全选  已勾选 3 项 │ ⚡创建 🔧修复 🔗认领 🖼图标 🗑删除 ───────┤
-├ 列表 ──────────────────────────────────────────────────────────────┤
-│  ☐ │ 🖼 │ 名称 │ 大小 │ 状态 │ 路径                                 │
-│                                                       ┌──────────┐ │
-│                                                       │✎编辑 ▶测试│ │
-│                                                       │📂目录 ⧉复制│ │
-│                                                       └──────────┘ │
-├ InfoBar ───────────────────────────────────────────────────────────┤
-```
-
-用**原生窗口标题栏**，不做自绘 —— 自绘标题栏在第三方 GTK 主题下容易把
-最小化/最大化画成空白圆圈，交给窗口管理器就不会。
-
-### 菜单
-
-| 菜单 | 项目 |
-|---|---|
-| 文件 | 添加扫描目录 `Ctrl+D` · 打开启动器目录 · 打开配置目录 · 退出 `Ctrl+Q` |
-| 编辑 | 全选 `Ctrl+A` · 取消选择 · 创建启动器 `Ctrl+N` · 修复选中项 · 认领 · 删除 `Delete` |
-| 视图 | 重新扫描 `F5` · 过滤（全部/新发现/已创建/外部/失效/可优化） · 最大化 `F11` |
-| 工具 | 健康检查 · 修复历史 · 失效与孤儿清理 · 用内置元数据补全所选启动器 · 设置 `Ctrl+,` |
-| 帮助 | 键盘快捷键 `F1` · 关于 |
-
-### 三种操作入口
-
-| 入口 | 覆盖范围 | 何时出现 |
-|---|---|---|
-| **常驻操作条** | 批量（创建/修复/认领/图标/删除） | 永远可见 |
-| **浮动操作条** | 单条（编辑/测试/打开目录/复制路径） | 选中行时 |
-| **右键菜单** | 全部 8 项 | 右键任意行 |
-
-目标选择规则：**勾选优先，无勾选时回退到行选中**。按钮按状态动态启用，
-禁用时 tooltip 说明原因。
-
-### 创建启动器
-
-点「⚡ 创建」弹对话框，预填启发式信息后由你确认：
-
-- **名称** 从文件名推导（`Obsidian-1.5.3-x86_64.AppImage` → `Obsidian`）
-- **命令** 已按 XDG 规范转义
-- **图标** 默认空，点「选择…」从磁盘挑一张图（png/svg/xpm，会复制进
-  图标缓存），旁边 32px 实时预览；编辑已有启动器时也能这么换图标
-- **分类** 可编辑下拉，按关键词给建议（`krita` → `Graphics;`）
-- 右侧**实时预览**最终写入的 `.desktop` 内容
-
-批量时逐个弹，可以「跳过」单条或勾「之后都用默认值」一键过完。
-
-**图标不自动提取，元数据不自动解包。** 主流程上是纯字符串操作，毫秒级
-完成、不可能卡死。需要更完整的元数据时，点对话框里的
-「尝试提取内置元数据」—— 它带 60 秒硬超时、可随时取消、失败会清理干净
-并告诉你原因。
+- **认领**：把第三方或手写的 `.desktop` 纳入管理。做法是只追加
+  `X-AppImage-Manager-*` 几个标记键，原来的内容一个字不动
+- **用内置元数据补全**：解开 AppImage，读里面那个 `.desktop` 的真实名称、
+  描述、分类、图标，补到已有的启动器上。只会替换 AppImage 里确实写了的
+  字段，而且只重写值真的变了的那几行
+- **删除**：删之前自动备份，之后可以从「修复历史」里还原
+- **清理**：一次处理失效的启动器（指向的 AppImage 不在了）和孤立的图标
 
 ### 首次运行
 
-没有弹窗向导。主窗口直接打开，显示空状态引导：
+没有向导弹窗。主窗口直接打开，显示一个空状态页，两个按钮：「添加目录」和
+「看看常见位置」。后者会列出 `~/Applications`、`~/apps` 这类常用位置，
+勾选后不存在的目录会直接创建。
 
-```
-              还没有添加扫描目录
-   添加一个目录，程序会扫描其中的 AppImage，
-   并帮你创建规范的桌面启动器
+## 保真
 
-        [ 添加目录… ]   [ 看看常见位置 ]
-```
+认领、修复、补全这三个操作会改写你的 `.desktop`，做法是只动确认要改的那几行，
+其余部分逐字节保留：
 
-「看看常见位置」会列出 `~/Applications`、`~/apps` 等，可勾选并直接创建
-不存在的目录。
+- 注释和空行原样留下
+- `Name = Foo` 这种带空格的非标准写法不会被"规范化"
+- `[Desktop Action …]` 之类的附加组完整保留
+- 幂等，同一个操作重复执行不会反复叠加内容
 
-### 快捷键
+先把文件解析成键值对、再整体序列化写回去，是实现上最省事的做法，但它会把这些
+细节全吃掉。认领一个精心写好的启动器，结果注释没了、附加组整组消失，这跟
+「只追加两行标记」的说法直接矛盾。所以这三个操作走的是字节级插入和行级最小
+改写。
 
-| 键 | 动作 | | 键 | 动作 |
-|---|---|---|---|---|
-| `F5` / `Ctrl+R` | 重新扫描 | | `Enter` | 创建 / 认领 / 编辑 |
-| `Ctrl+A` | 全选 | | `Delete` | 删除选中的启动器 |
-| `Ctrl+F` | 聚焦搜索 | | `F11` | 最大化 / 还原 |
-| `Ctrl+N` | 创建启动器 | | `F1` | 快捷键说明 |
-| `Ctrl+D` | 添加扫描目录 | | `Ctrl+Q` | 退出 |
-| `Ctrl+,` | 设置 | | 双击条目 | 未创建→创建；已创建→编辑 |
+写入本身是原子的：临时文件写完 `fsync`，再 `rename` 覆盖。桌面环境读取的时候
+要么看到旧文件，要么看到新文件，不会读到写了一半的。
 
-窗口最小 **620 × 560**，窄窗口下操作条自动变横向滚动。窗口宽度不足
-880 px 时，右下角的浮动操作条会自动收起 —— 它本来就会盖住列表最后几行，
-窗口一小就等于让那几行没法点。
+## 事务和回滚
 
-没有「全屏」—— 只有「最大化」。真全屏在 X11 下由窗口管理器负责撤掉
-全部装饰，标题栏和最小化/最大化/关闭三个按钮会一起消失，用起来像是
-按钮坏了。最大化占满屏幕但保留标题栏，那才是实际想要的效果。
-双击标题栏、或按窗口管理器的快捷键（xfwm4 是 `Super+↑`）也能最大化，
+每次操作都会记账。
+
+- 两阶段提交，先在 journal 里写意图，执行完再标记完成
+- 启动时检查有没有没完成的事务，有的话可以一键回滚
+- 修复历史是追加式的，任何时候都能还原到之前的状态，还原本身也会记一笔
+- 备份默认保留 30 天、200 个事务，可以在设置里改
+
+## 健康检查
+
+对已有的 `.desktop` 做体检，一共 28 条规则，按严重程度分四级：
+
+| 级别 | 例子 |
+|---|---|
+| 致命 | 缺 `[Desktop Entry]` 组头、UTF-8 BOM、CRLF 行尾、编码里有非法字节 |
+| 严重 | `Version=` 超出范围、`Exec=` 没转义、`Exec=` 指向的文件不存在、`Type=` 不对、键重复、`Actions=` 引用了不存在的组 |
+| 警告 | `Icon=` 丢了、缺 `Categories=`、缺 `StartupWMClass=`、`Terminal=true`、文件名不规范 |
+| 提示 | 缺 `GenericName=`、缺 `TryExec=`、没有被本工具管理 |
+
+## 界面语言
+
+菜单里的「语言」有三项：跟随系统、简体中文、English。
+
+首次启动默认跟随系统 locale。`LANG` / `LC_MESSAGES` 不含 `zh` 的环境直接
+显示英文，不需要先去菜单里找一遍。
+
+切换之后会弹一条提示，带「立即重启」按钮。重启用的是同进程换映像
+（`execv`），GApplication 的单实例名全程不断，不会出现点了没反应、或者
+同时跑起来两个的情况。之所以要重启而不是立即换，是因为 GTK 的控件文字在
+构造时就定下来了，现场替换要重建整棵控件树，代价大于收益。
+
+界面文案有 570 条，都在 `src/i18n.vala` 里做成对照表编译进二进制。没有用
+gettext，因此不需要 `.po` 文件和 `msgfmt`，CI 和三个发行版包都少一层依赖。
+查不到的条目会退回中文显示，不会出现空白。
+
+GTK 自带的那部分（文件选择器、颜色选择器）也在跟随，做法是在 GTK 初始化
+之前把 `LANGUAGE` 设成对应语言。不设的话会出现界面中文、弹出英文文件
+对话框的割裂情况。
+
+## 快捷键
+
+| 键 | 动作 | 键 | 动作 |
+|---|---|---|---|
+| `F5` / `Ctrl+R` | 重新扫描 | `Enter` | 创建 / 认领 / 编辑 |
+| `Ctrl+A` | 全选 | `Delete` | 删除选中的启动器 |
+| `Ctrl+F` | 聚焦搜索框 | `F11` | 最大化 / 还原 |
+| `Ctrl+N` | 创建启动器 | `F1` | 快捷键说明 |
+| `Ctrl+D` | 添加扫描目录 | `Ctrl+Q` | 退出 |
+| `Ctrl+,` | 设置 | 双击条目 | 未创建则创建，已创建则编辑 |
+
+界面用的是窗口管理器绘制的原生标题栏，没有自绘。自绘标题栏在第三方 GTK
+主题下容易把最小化、最大化画成空白圆圈，交给窗口管理器就没这个问题。
+
+只有「最大化」，没有「全屏」。真全屏在 X11 下要由窗口管理器撤掉全部装饰，
+标题栏和三个按钮会一起消失，看起来像按钮坏了。最大化占满屏幕但保留标题栏。
+双击标题栏或者用窗口管理器自己的快捷键（xfwm4 是 `Super+↑`）也能最大化，
 菜单里的勾选会跟着同步。
 
----
+窗口最小 620 × 560。宽度不足 880 px 时右下角的浮动操作条会自动收起，
+免得盖住列表最后几行。
 
 ## 编译
 
-### 依赖
+依赖：
 
 ```bash
 # Debian / Ubuntu / Kali
@@ -269,90 +210,80 @@ sudo dnf install vala gtk3-devel json-glib-devel pkgconfig
 sudo pacman -S vala gtk3 json-glib pkgconf
 ```
 
-版本要求：Vala ≥ 0.48，GTK ≥ 3.24。
-
-跑测试还需要（界面自动化用）：
-
-```bash
-sudo apt install desktop-file-utils xvfb xfwm4 xdotool imagemagick xclip
-```
-
-```bash
-make selftest        # 253 项引擎自测，不依赖图形环境
-tests/ui-test.sh     # 21 步界面自动化 + 全按钮点击稳定性检查，需要上面那套工具
-```
-
-两条测试在 CI 上是**分开跑的**：
-
-| 工作流 | 触发 | 跑什么 | 耗时 |
-|---|---|---|---|
-| `ci.yml` | 每次 push / PR | 编译 + 253 项引擎自测 + 打包可用性 | ~2 分钟 |
-| `ui-test.yml` | 手动点 / 每周一 | 21 步界面自动化 | ~50 分钟 |
-| `release.yml` | 推 `v*` tag | 编译 + 引擎自测 + 打包 + **产物验证** | ~5 分钟 |
-
-界面测试不放在每次 push 上，原因有三个：它慢（本地实测 55 分钟以上，
-塞进 15 分钟超时的 job 会被杀掉报假红）；它脆（靠像素扫描和硬编码坐标，
-改一次界面就可能要重新标定）；它挡的问题类型窄（真正只有它能发现的，
-值得定期跑，不值得每次都跑）。
-
-缺工具时 `ui-test.sh` 会**跳过并退 0**，所以本地没装全不会误判为失败 ——
-但也正因为如此，`ui-test.yml` 里必须把工具装齐，否则会得到一个绿色的假通过。
-
-### 构建
+要求 Vala ≥ 0.48，GTK ≥ 3.24。
 
 ```bash
 make          # 产出 ./appimage-manager
 make run      # 编译并运行
 ```
 
-### 安装
+安装：
 
 ```bash
 sudo make install                  # 默认装到 /usr/local
 make install PREFIX=$HOME/.local   # 或者装到用户目录
+sudo make uninstall                # 卸载
 ```
 
-安装内容：
-- `$PREFIX/bin/appimage-manager`
-- `$PREFIX/share/applications/appimage-manager.desktop`
-- `$PREFIX/share/icons/hicolor/256x256/apps/appimage-manager.png`
+装三个文件：`$PREFIX/bin/appimage-manager`、
+`$PREFIX/share/applications/appimage-manager.desktop`、
+`$PREFIX/share/icons/hicolor/256x256/apps/appimage-manager.png`。
 
-卸载：`sudo make uninstall`
+### 测试
 
-### 免安装运行（打包成 AppImage）
+```bash
+make selftest        # 253 项引擎自测，不需要图形环境
+tests/ui-test.sh     # 21 步界面自动化，需要下面这套工具
+```
+
+界面测试还需要：
+
+```bash
+sudo apt install desktop-file-utils xvfb xfwm4 xdotool imagemagick xclip
+```
+
+缺工具时 `ui-test.sh` 会跳过并退 0，本地没装全不会被误判成失败。也正因为如此，
+CI 里跑它的那个 workflow 必须把工具装齐，否则会得到一个绿色的假通过。
+
+两个测试在 CI 里是分开跑的：
+
+| 工作流 | 触发 | 内容 | 耗时 |
+|---|---|---|---|
+| `ci.yml` | 每次 push / PR | 编译、253 项引擎自测、打包可用性 | 约 2 分钟 |
+| `ui-test.yml` | 手动触发、每周一 | 21 步界面自动化 | 约 50 分钟 |
+| `release.yml` | 推 `v*` tag | 编译、自测、打包、产物验证 | 约 5 分钟 |
+
+界面测试不放在每次 push 上，原因有三个。它慢，本地实测要 55 分钟以上，
+塞进 15 分钟超时的 job 里会被杀掉然后报一个跟代码无关的红。它脆，断言建立在
+像素扫描和硬编码坐标上，改一次界面就可能要重新标定。它挡的问题类型也窄，
+真正只有界面测试能发现的那些，值得定期跑一次，不值得每次 push 都跑。
+
+### 打包成 AppImage
 
 ```bash
 make appimage
 # → dist/AppImage-Manager-1.0.0-x86_64.AppImage   （约 496 KiB）
 ```
 
-产出一个自包含的 AppImage，`chmod +x` 后双击即可运行，不需要安装到
-任何系统目录。
+体积只有几百 KB，是因为它不打包 GTK，运行时用系统的。要完全自包含得把整个
+GTK 栈塞进去，体积会涨到 100 MB 以上，还要处理 glibc 版本兼容，对这个工具
+不划算。
 
-体积只有几百 KB，是因为它**不打包 GTK**，运行时用系统的 GTK3 ——
-所以目标机需要已装 GTK3（桌面发行版基本都有）。要完全自包含得把整个
-GTK 栈打进去，体积会涨到 100 MB 以上，还要处理 glibc 版本兼容，
-对这个工具不划算。
-
-打包不需要联网，也不需要 `appimagetool`：脚本从本机已有的任意
-type-2 AppImage 里取出运行时，配上系统自带的 `mksquashfs` 自己拼装。
-
-运行时按以下顺序找，第一个可用的胜出：
+打包不需要联网，也不需要 `appimagetool`：脚本从本机已有的任意 type-2
+AppImage 里取出运行时，配上系统的 `mksquashfs` 自己拼。运行时按这个顺序找，
+第一个可用的胜出：
 
 1. `RUNTIME=/path/to/runtime` 环境变量
-2. 仓库里的 `runtime/appimage-runtime-x86_64`（首次成功后缓存于此）
-3. 从本机现成的 AppImage 里提取：`$APPMGR_RUNTIME_SOURCE`、然后
-   `~/Desktop/audit/dl/*.AppImage`、然后 `/tmp/*.AppImage`
+2. 仓库里的 `runtime/appimage-runtime-x86_64`，首次成功后缓存在这
+3. 从本机现成的 AppImage 里提取：先看 `$APPMGR_RUNTIME_SOURCE`，再看
+   `~/Desktop/audit/dl/*.AppImage`，最后看 `/tmp/*.AppImage`
 
-取运行时长度用的是 AppImage **自己报告的** `--appimage-offset`，不是
-去文件里搜 `hsqs` 魔数 —— 运行时自己的代码里就含有那 4 个字节，直接搜
-会命中假阳性，截出一个「能启动但 `--appimage-extract` 段错误」的残废
-运行时。每个候选运行时都要通过「重建后自报偏移一致 + 解包退出码为 0」
-的往返校验才会被采用。
+取运行时长度用的是 AppImage 自己报告的 `--appimage-offset`，不是在文件里搜
+`hsqs` 魔数。运行时的代码里就含有那四个字节，直接搜会命中假阳性，截出一个
+能启动但 `--appimage-extract` 段错误的残废运行时。每个候选运行时都要通过
+「重建后自报偏移一致，并且解包退出码为 0」的往返校验才会被采用。
 
-`dist/` 和 `runtime/` 已在 `.gitignore` 里。
-
-### 打成 deb / rpm / arch 包
+### 打包成 deb / rpm / arch
 
 ```bash
 # .desktop 里有 @PREFIX@ 占位符要替换，而 nfpm 不做替换，
@@ -360,34 +291,29 @@ type-2 AppImage 里取出运行时，配上系统自带的 `mksquashfs` 自己�
 make install DESTDIR=build/pkg PREFIX=/usr
 
 cd packaging
-/tmp/nfpm package --config nfpm.yaml --packager deb      --target ../dist
-/tmp/nfpm package --config nfpm.yaml --packager rpm      --target ../dist
-/tmp/nfpm package --config nfpm.yaml --packager archlinux --target ../dist
+nfpm package --config nfpm.yaml --packager deb       --target ../dist
+nfpm package --config nfpm.yaml --packager rpm       --target ../dist
+nfpm package --config nfpm.yaml --packager archlinux --target ../dist
 ```
 
-用 [nfpm](https://nfpm.goreleaser.com/) 而非 `debian/rules` + `.spec` +
-`PKGBUILD` 三套文件：一处配置生成三种包，各系的依赖名不同（GTK3 在 deb
-上叫 `libgtk-3-0`、新版还是 `libgtk-3-0t64`，rpm 与 arch 上叫 `gtk3`），
-统一维护比三份文件可靠。
-
-配置在 `packaging/nfpm.yaml`，改依赖只改那里。
-
----
+用的是 [nfpm](https://nfpm.goreleaser.com/) 而不是 `debian/rules` + `.spec` +
+`PKGBUILD` 三套文件。一处配置生成三种包，各系的依赖名还不一样（GTK3 在 deb
+上叫 `libgtk-3-0`，新版叫 `libgtk-3-0t64`，rpm 和 arch 上都叫 `gtk3`），
+统一维护比三份文件可靠。配置在 `packaging/nfpm.yaml`，改依赖只改那里。
 
 ## 文件位置
 
 | 用途 | 路径 |
 |---|---|
 | 配置 | `~/.config/appimage-manager/config.ini` |
-| 启动器（写入目标） | `~/.local/share/applications/` |
+| 启动器写入目标 | `~/.local/share/applications/` |
 | 图标缓存 | `~/.local/share/icons/hicolor/<尺寸>/apps/` |
 | 事务日志 | `~/.local/share/appimage-manager/journal/` |
 | 备份与历史 | `~/.local/share/appimage-manager/history/` |
-| 提取临时区 | `~/.cache/appimage-manager/extract/` |
+| 解包临时区 | `~/.cache/appimage-manager/extract/` |
 
-启动器目录遵守 XDG 规范（`$XDG_DATA_HOME`），在菜单搜索顺序里**优先于** `/usr/share/applications`，所以用户级安装的启动器会覆盖系统级的同名条目。
-
----
+启动器目录遵守 XDG 规范（`$XDG_DATA_HOME`），在菜单搜索顺序里优先于
+`/usr/share/applications`，所以用户级安装的启动器会覆盖系统级的同名条目。
 
 ## 项目结构
 
@@ -396,71 +322,66 @@ src/
 ├── main.vala           应用入口，Gtk.Application 装配
 ├── window.vala         主窗口：列表、目录条、浮动操作条、InfoBar
 ├── dialogs.vala        编辑器 / 修复 / 认领 / 清理 / 设置 / 历史 / 进度
-├── menubar.vala        传统菜单栏
-├── prefill.vala        从文件名 / AppImage 推导预填值
+├── menubar.vala        菜单栏
+├── prefill.vala        从文件名和 AppImage 推导预填值
 ├── pill.vala           状态药丸的自定义渲染器
 ├── store.vala          数据模型，二维状态（匹配 × 健康）
 ├── config.vala         GKeyFile 配置持久化
-├── scanner.vala        递归扫描 + 魔数校验
+├── scanner.vala        递归扫描和魔数校验
 ├── appimage.vala       --appimage-extract 元数据与图标提取
 ├── desktopfiles.vala   条目解析、Exec 转义、原子写、校验
-├── rules.vala          28 条健康检查规则引擎
-├── repair.vala         三级修复模式、diff 生成、字节级改写、事务化执行
+├── rules.vala          28 条健康检查规则
+├── repair.vala         三级修复模式、diff 生成、字节级改写
 ├── journal.vala        WAL 两阶段事务、崩溃恢复
 ├── backup.vala         备份存储、追加式历史、还原
+├── i18n.vala           中英文对照表
 ├── version.vala        版本号
-├── i18n.vala           中英文对照表与 I18n.s()（编译进二进制，不依赖 gettext）
-├── paths.vala          XDG 路径解析、文件操作兼容层
+└── paths.vala          XDG 路径解析、文件操作兼容层
 data/
-├── style.css           GTK3 样式表（主题自适应）
-├── appimage-manager.png            应用图标
-├── appimage-manager.desktop.in     安装版 .desktop 模板
-└── appimage-manager-appimage.desktop.in   AppImage 内嵌版 .desktop 模板
+├── style.css                           GTK3 样式表，跟随主题
+├── appimage-manager.png                应用图标
+├── appimage-manager.desktop.in         安装版 .desktop 模板
+└── appimage-manager-appimage.desktop.in  AppImage 内嵌版模板
 scripts/
-└── make-appimage.sh    离线打包成 AppImage（取运行时 + mksquashfs + 拼装）
+└── make-appimage.sh    离线打包成 AppImage
 tests/
-├── selftest.vala       引擎自测（不依赖 GUI）
-├── ui-test.sh          Xvfb + xdotool 的界面自动化测试
-├── ui-helpers.sh       ui-test.sh 复用的断言与截图辅助
-└── make-fixtures.sh    生成测试用假 AppImage 与 21 个畸形 .desktop
+├── selftest.vala       引擎自测，不依赖 GUI
+├── ui-test.sh          Xvfb + xdotool 的界面自动化
+├── ui-helpers.sh       断言与截图辅助
+└── make-fixtures.sh    生成测试用的假 AppImage 和 21 个畸形 .desktop
 ```
 
----
+## 设计取舍
 
-## 设计要点
+**状态是两个维度。** 「匹配状态」（新发现 / 已创建 / 外部 / 失效）和「健康
+状态」（健康 / 可优化 / 损坏）是正交的，所以状态药丸同时反映两者。把这两个
+维度压成一维枚举，是很多同类工具后面越改越乱的原因。
 
-**状态是二维的。** 「匹配状态」（新发现 / 已创建 / 外部 / 失效）和「健康状态」（健康 / 可优化 / 损坏）是正交的两个维度，所以状态药丸会同时反映两者。
+**慢操作不阻塞界面。** 图标提取要解包 AppImage，单个文件几十到几百 MB，
+放在后台线程里跑，配可取消的进度条。`.desktop` 的写入是毫秒级的，同步执行。
 
-**慢操作绝不阻塞 UI。** 图标提取要解包 AppImage（单个几十到几百 MB），放在后台线程池里跑，带可取消的进度条。`.desktop` 写入是毫秒级的，同步执行。
+**事务边界压到最短。** 并发全部放在事务之前，事务内只做纯文件操作。这样
+事务持有的时间是可预测的，不需要处理事务内的并发。
 
-**事务边界压到最短。** 并发全部放在事务之前（图标提取），事务内只做纯文件操作。
-
-**写入永远原子。** 临时文件 → `fsync` → `rename`。最坏情况是「部分文件已修、部分未修」，永远不会是「文件损坏」。
-
-**任何自动修复都可逆。** 修复前备份原文件，历史是追加式的，还原本身也是一条新记录。
-
----
+**任何自动修复都可逆。** 改之前先备份，历史是追加的，还原本身也是一条新
+记录。所以不存在还原之后历史对不上这种情况。
 
 ## 已知限制
 
-- AppImage 的 `--appimage-extract` 需要文件有执行权限。**本工具绝不擅自
-  改动你的 AppImage**：遇到没有执行位的文件会弹窗询问，默认选项是不
-  改动文件。对 `/opt`、`/media` 下的文件可能需要管理员权限，届时加执行
-  位会失败，会如实告知而不是假装成功
-- 解包可能很慢（大 AppImage 要几十秒到几分钟），超时可配（默认 60 秒，
-  范围 5–600），且随时可取消。取消或超时会强杀子进程，不留后台残留
-- 图标提取和解包不支持加密或分段（`.part`）的 AppImage
-- 不管理 `~/.local/share/applications` 之外的启动器目录；放在别处的
-  启动器可以认领，但扫描不会看到它（认领时会就此询问）
-- 打包出的 AppImage 依赖系统的 GTK3，不做 GTK 全量打包（详见「免安装
-  运行」一节）
-
----
+- `--appimage-extract` 需要文件有执行权限。本工具不会擅自改你的 AppImage，
+  遇到没有执行位的文件会询问，默认选项是不动它。`/opt`、`/media` 下的文件
+  可能需要管理员权限，加执行位失败时会如实告知，不会假装成功
+- 解包可能很慢，大文件要几十秒到几分钟。超时可配（默认 60 秒，范围 5 到
+  600），随时可取消。取消或超时会强杀子进程，不留后台残留
+- 加密和分段（`.part`）的 AppImage 不支持提取图标和解包
+- 不管理 `~/.local/share/applications` 之外的启动器目录。放在别处的启动器
+  可以认领，但扫描看不到它，认领时会就这一点询问
+- 打包出来的 AppImage 依赖系统的 GTK3，没有做 GTK 全量打包
 
 ## 许可证
 
 GPL-3.0，见 [LICENSE](LICENSE)。
 
-本仓库的源码即为完整源码。分发二进制（deb / rpm / arch 包、AppImage、
-tar.gz）时必须同时提供对应版本的完整源码 —— GitHub 上打 tag 的每个
-Release 都能还原出该版本的全部源码，clone 后 `git checkout <sha>` 即可。
+仓库里的源码就是完整源码。分发二进制（deb / rpm / arch 包、AppImage、
+tar.gz）时需要同时提供对应版本的完整源码，打 tag 的每个 Release 都能还原出
+该版本的全部源码，clone 之后 `git checkout <sha>` 即可。
