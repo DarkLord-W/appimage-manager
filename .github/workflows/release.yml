@@ -454,6 +454,29 @@ jobs:
             echo '```'
           } > "${{ github.workspace }}/RELEASE_NOTES.md"
 
+      # 重打同一个 tag 时，上一次的 Release 记录和资产都还在。而
+      # action-gh-release 只会**覆盖同名**资产，不会删掉这次没传的 ——
+      # 于是改过名的资产会永远留在 Release 里（v1.0.0 上就躺着一个
+      # 文件名被 GitHub 剥成 `README-.txt` 的僵尸，正文里根本没提它）。
+      #
+      # 删掉记录重来，比事后按名单逐个清理资产简单，也不会漏。
+      # 这一步顺带解决了「Release 已存在」可能带来的各种边界情况：
+      # 后面那步拿到的永远是全新记录。
+      - name: 清掉旧的 Release 记录
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="v${{ steps.ver.outputs.version }}"
+
+          # 没有旧记录是正常情况（首次发布），所以不把失败当错误。
+          # 不加 --cleanup-tag：tag 要留着，它正是这次运行的起因。
+          if gh release delete "$TAG" --yes --repo "$GITHUB_REPOSITORY" 2>/dev/null; then
+            echo "已删掉旧的 Release 记录（$TAG），资产一并消失"
+          else
+            echo "$TAG 上没有旧记录，跳过"
+          fi
+
       - name: 发布到 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
