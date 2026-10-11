@@ -43,8 +43,10 @@ package() {
     # 许可证全文。GPL 要求分发二进制时附带；AppImage 里有（由 make install
     # 装进 AppRun 目录树），直接取过来。取不到就报错而不是静默少一个文件。
     if [ ! -f squashfs-root/usr/share/licenses/appimage-manager/LICENSE ]; then
-        echo "ERROR: AppImage 里没有 LICENSE。" >&2
-        echo "       可能是用旧版 make-appimage.sh 打的包（那时 make install 还不装许可证）。" >&2
+        echo "ERROR: AppImage 里没有 LICENSE，这个包不能这么打。" >&2
+        echo "       原因通常是这个 Release 的 AppImage 由旧版 Makefile 打出 ——" >&2
+        echo "       那时 make install 还不装许可证（在 Makefile 的 install 目标里）。" >&2
+        echo "       用当前代码重打一个 Release 再发这个包。" >&2
         exit 1
     fi
     install -Dm644 squashfs-root/usr/share/licenses/appimage-manager/LICENSE \
