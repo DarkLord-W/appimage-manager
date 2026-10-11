@@ -1293,6 +1293,10 @@ public class I18n : GLib.Object {
         "\"%s\" is already managed by this tool; there is no need to claim it again.\n\n",
         "文件没有被改动。",
         "The file was not modified.",
+        "严重",
+        "Critical",
+        "警告",
+        "Warning",
 };
         return lazy_table;
     }
