@@ -73,8 +73,9 @@ dependency, so installing them pulls it in.
 
 On Arch you can also use the AUR: `appimage-manager` builds from source and
 runs the test suite; `appimage-manager-bin` unpacks the released AppImage and
-installs in seconds. Both install exactly the same files and conflict with each
-other, so pick one.
+installs in seconds. Both install the same set of files and conflict with each
+other, so pick one. The binaries themselves are built separately (one in CI,
+one on your machine), so they are not byte-identical.
 
 To build from source, see [Building](#building).
 
