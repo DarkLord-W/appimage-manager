@@ -87,6 +87,12 @@ jobs:
           su builder -c "git config --global --add safe.directory '$GITHUB_WORKSPACE'"
           su builder -c "git config --global --add safe.directory '*'"
 
+          # makepkg -s 会调 `sudo pacman -S` 装依赖，而容器里的 builder
+          # 默认不在 sudoers 里。少了这行，构建会走到下载依赖那一步才因为
+          # 「sudo: a password is required」失败 —— 报错位置离真正原因很远。
+          echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+          chmod 440 /etc/sudoers.d/builder
+
       # ── 验证凭据 ────────────────────────────────────────────────────
       #
       # 先确认私钥真能连上 AUR。否则要等到最后一步推送才发现密钥配错，
@@ -102,26 +108,52 @@ jobs:
                exit 1;;
           esac
 
-      # ── 先真构建一遍 ────────────────────────────────────────────────
+      # ── 先准备，再构建 ──────────────────────────────────────────────
+      #
+      # 顺序不能反。仓库里的 PKGBUILD 留的是**全零 sha256sums 占位符**
+      # （真值要到推送前才知道），拿它直接 `makepkg -s` 会失败，报出来的是
+      # 「One or more files failed to validate」—— 跟真正的原因（校验和还没
+      # 填）看起来毫无关系。所以先用脚本的准备模式把版本号和真校验和填进去。
+      - name: 准备 PKGBUILD（填版本号和校验和）
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/stage
+          # 交给 builder：prepare 里会用 makepkg --printsrcinfo 生成
+          # .SRCINFO（那是权威版本），而 makepkg 拒绝以 root 运行。
+          install -d -o builder -g builder /tmp/stage
+          VER="${{ inputs.version }}"
+          if [ -n "$VER" ]; then
+            su builder -c "cd '$GITHUB_WORKSPACE' && AUR_STAGE=/tmp/stage scripts/publish-aur.sh '$VER'"
+          else
+            su builder -c "cd '$GITHUB_WORKSPACE' && AUR_STAGE=/tmp/stage scripts/publish-aur.sh"
+          fi
+          echo "── 准备好的文件 ──"
+          find /tmp/stage -type f | sort | sed 's/^/  /'
+
+      # ── 再真构建一遍 ────────────────────────────────────────────────
       #
       # 这一步的价值：能在推给 AUR 之前就发现「校验和填错了」「源码包
       # 下不下来」「build/check/package 哪一步坏了」。这些错如果推到
       # AUR，是**所有 Arch 用户**装的时候才炸。
+      #
+      # 两个包都构建：-bin 的路子和源码包完全不同（它下载 AppImage 然后
+      # --appimage-extract），源码包过了不代表它能过。
       - name: 构建验证（makepkg + namcap）
         run: |
           set -euo pipefail
-          su builder -c "cd '$GITHUB_WORKSPACE/packaging/aur' && \
-            makepkg -s --noconfirm --cleanbuild"
+          for p in appimage-manager appimage-manager-bin; do
+            echo "════ $p ════"
+            su builder -c "cd '/tmp/stage/$p' && makepkg -s --noconfirm --cleanbuild"
 
-          echo "── 产物 ──"
-          ls -la "$GITHUB_WORKSPACE"/packaging/aur/*.pkg.tar.zst
+            echo "── 产物 ──"
+            ls -la "/tmp/stage/$p"/*.pkg.tar.zst
 
-          echo "── namcap 包检查 ──"
-          su builder -c "cd '$GITHUB_WORKSPACE/packaging/aur' && \
-            namcap *.pkg.tar.zst" || true
+            echo "── namcap 包检查 ──"
+            su builder -c "cd '/tmp/stage/$p' && namcap *.pkg.tar.zst" || true
 
-          echo "── 包内容 ──"
-          tar --zstd -tf "$GITHUB_WORKSPACE"/packaging/aur/*.pkg.tar.zst | sed 's/^/  /'
+            echo "── 包内容 ──"
+            tar --zstd -tf "/tmp/stage/$p"/*.pkg.tar.zst | sed 's/^/  /'
+          done
 
       # ── 发布 ────────────────────────────────────────────────────────
       - name: 发布到 AUR
@@ -139,6 +171,8 @@ jobs:
       - name: 结果
         if: success() && !inputs.dry_run
         run: |
-          echo "✓ 已推送到 AUR"
+          echo "✓ 两个包都已推送到 AUR（索引有几秒延迟，刚推完可能还看不到）"
           echo "  https://aur.archlinux.org/packages/appimage-manager"
-          echo "  （AUR 索引有几秒延迟，刚推完可能还看不到）"
+          echo "  https://aur.archlinux.org/packages/appimage-manager-bin"
+          echo
+          echo "  两者互相冲突（provides + conflicts），用户装其中一个即可。"

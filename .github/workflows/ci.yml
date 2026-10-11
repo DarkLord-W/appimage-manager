@@ -121,16 +121,26 @@ jobs:
           useradd -m builder
           chown -R builder:builder "$GITHUB_WORKSPACE"
 
-          su builder -c "cd '$GITHUB_WORKSPACE/packaging/aur' && makepkg --printsrcinfo" \
-              > /tmp/real.SRCINFO
-          echo "── makepkg 生成的 ──"
-          cat /tmp/real.SRCINFO
+          # 两个包都要验。appimage-manager-bin 的 PKGBUILD 里 sha256sums
+          # 是全零占位符（真值由 publish-aur.sh 在推送前填），不影响这里 ——
+          # --printsrcinfo 只解析 PKGBUILD，不下载任何东西。
+          rc=0
+          for dir in packaging/aur packaging/aur-bin; do
+            echo "════ $dir ════"
 
-          if ! diff -u packaging/aur/.SRCINFO /tmp/real.SRCINFO; then
-            echo "::error::.SRCINFO 与 makepkg 的输出不一致。跑 scripts/gen-srcinfo.sh 重新生成再提交。"
-            exit 1
-          fi
-          echo "✓ .SRCINFO 与 makepkg 的输出逐字节一致"
+            su builder -c "cd '$GITHUB_WORKSPACE/$dir' && makepkg --printsrcinfo" \
+                > /tmp/real.SRCINFO
+
+            if ! diff -u "$dir/.SRCINFO" /tmp/real.SRCINFO; then
+              echo "::error::$dir/.SRCINFO 与 makepkg 的输出不一致。"
+              echo "::error::跑这个重新生成再提交："
+              echo "::error::  scripts/gen-srcinfo.sh $dir/PKGBUILD > $dir/.SRCINFO"
+              rc=1
+            else
+              echo "✓ $dir/.SRCINFO 与 makepkg 的输出逐字节一致"
+            fi
+          done
+          exit $rc
 
       - name: namcap 检查
         run: |
@@ -139,7 +149,10 @@ jobs:
           # 但 PKGBUILD 模式下它把发现的问题打到 stderr。
           # 这里只做「有输出就展示」，不让它把构建卡住 ——
           # 真正该拦的是 .SRCINFO 不一致，那个在上面已经拦了。
-          su builder -c "cd '$GITHUB_WORKSPACE/packaging/aur' && namcap PKGBUILD" || true
+          for dir in packaging/aur packaging/aur-bin; do
+            echo "════ $dir ════"
+            su builder -c "cd '$GITHUB_WORKSPACE/$dir' && namcap PKGBUILD" || true
+          done
 
   package-check:
     name: 打包可用性（不发布）
