@@ -65,6 +65,10 @@ AppImage 的好处是不用安装，代价是安装过程替你做的那些事�
 AppImage 和 tar.gz 版依赖系统里已装的 GTK3，桌面发行版都有。deb / rpm /
 arch 包会把依赖声明好，装的时候自动处理。
 
+Arch 用户也可以走 AUR：`appimage-manager` 现场编译，编译完会跑一遍自测；
+`appimage-manager-bin` 解包 Release 里的 AppImage，几秒钟装完。两个包装出来
+的文件完全一样，互相冲突，选一个就好。
+
 从源码编译见[编译](#编译)。
 
 ## 用法
