@@ -50,14 +50,21 @@ package() {
     install -Dm644 squashfs-root/usr/share/licenses/appimage-manager/LICENSE \
         "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 
-    # .desktop 用 AppImage 自带的，只改一处：Exec=AppRun %U →
-    # Exec=/usr/bin/appimage-manager %U。AppRun 是 AppImage 内部的启动器，
-    # 正常安装之后那个文件不存在。
+    # .desktop 用 AppImage 自带的，改两处：
+    #
+    #   Exec=AppRun → /usr/bin/appimage-manager
+    #     AppRun 是 AppImage 内部的启动器，正常安装之后那个文件不存在。
+    #   X-AppImage-Version 整行删掉
+    #     那是 AppImage 专用的字段。pacman 装的包不是 AppImage，
+    #     留着它只会让以后排查问题的人误以为装的是 AppImage。
     #
     # 不自己写一份完整的：AppImage 里那份本来就是从仓库的模板生成的，
-    # 抄一份出来就有了两个真相来源，将来改模板会漏掉这个。
+    # 抄一份出来就有了两个真相来源，将来改模板必然会漏掉这个 ——
+    # 尤其是 StartupWMClass，它必须和程序里 set_wmclass() 的 class
+    # 字段一致，否则任务栏图标会退回通用占位图。
     install -d "$pkgdir/usr/share/applications"
-    sed 's|^Exec=AppRun|Exec=/usr/bin/appimage-manager|' \
+    sed -e 's|^Exec=AppRun|Exec=/usr/bin/appimage-manager|' \
+        -e '/^X-AppImage-Version=/d' \
         squashfs-root/appimage-manager.desktop \
         > "$pkgdir/usr/share/applications/appimage-manager.desktop"
     chmod 0644 "$pkgdir/usr/share/applications/appimage-manager.desktop"
