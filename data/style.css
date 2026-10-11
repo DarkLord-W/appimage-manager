@@ -9,6 +9,15 @@
  *   1. 全部颜色取自 GTK 主题变量，深色/浅色主题自动成立
  *   2. 不硬编码背景色（唯一例外是 flash 动画的高亮）
  *   3. 语义化类名，不依赖具体控件树位置
+ *   4. **只用 GTK3 主题契约里的变量名**：theme_fg_color / theme_bg_color /
+ *      theme_base_color / theme_selected_bg_color / theme_selected_fg_color /
+ *      insensitive_fg_color / borders / error_color / warning_color /
+ *      success_color。这些每个 GTK3 主题都必须定义。
+ *
+ *      别用 @accent_bg_color / @accent_color —— 那是 GTK4/libadwaita 的名字，
+ *      GTK3 主题（比如 Windows-10）里根本没有。GTK3 对未定义的颜色变量是
+ *      **静默丢弃整条声明**，不报错也不警告，于是规则看着在、跑起来等于没有。
+ *      这条踩过：整个选中高亮在 Windows-10 下消失了很久没人发现。
  * ══════════════════════════════════════════════════════════════════════════ */
 
 /* ── 状态药丸 ─────────────────────────────────────────────────────────────
@@ -50,9 +59,9 @@
 
 /* 蓝 —— 外部创建 */
 .pill-info {
-    background-color: alpha(@accent_bg_color, 0.18);
-    border-color: alpha(@accent_bg_color, 0.45);
-    color: @accent_bg_color;
+    background-color: alpha(@theme_selected_bg_color, 0.18);
+    border-color: alpha(@theme_selected_bg_color, 0.45);
+    color: @theme_selected_bg_color;
 }
 
 /* 灰 —— 未知 / 忽略 */
@@ -91,8 +100,8 @@
 }
 
 .dir-chip:hover {
-    background-color: alpha(@accent_bg_color, 0.14);
-    border-color: alpha(@accent_bg_color, 0.55);
+    background-color: alpha(@theme_selected_bg_color, 0.14);
+    border-color: alpha(@theme_selected_bg_color, 0.55);
 }
 
 /* 目录不存在 */
@@ -150,7 +159,7 @@ menubar > menuitem {
 }
 
 menubar > menuitem:hover {
-    background-color: alpha(@accent_bg_color, 0.20);
+    background-color: alpha(@theme_selected_bg_color, 0.20);
 }
 
 /* ── 工具栏 ─────────────────────────────────────────────────────────────── */
@@ -211,8 +220,8 @@ menubar > menuitem:hover {
 }
 
 .option-card:hover {
-    border-color: alpha(@accent_bg_color, 0.55);
-    background-color: alpha(@accent_bg_color, 0.07);
+    border-color: alpha(@theme_selected_bg_color, 0.55);
+    background-color: alpha(@theme_selected_bg_color, 0.07);
 }
 
 /* ── 主列表 ─────────────────────────────────────────────────────────────── */
@@ -235,14 +244,36 @@ treeview.view.app-list header button {
     background-color: alpha(@theme_bg_color, 0.55);
 }
 
-/* 悬停高亮 */
+/* 悬停高亮。
+ *
+ * 用中性的前景色淡化，不用主题的选中色 —— Windows-10 那种主题的
+ * @theme_selected_bg_color 本身是 #cce8ff（很淡的蓝），拿它做 10% 的
+ * 叠加等于什么都没画。
+ */
 treeview.view.app-list:hover {
-    background-color: alpha(@accent_bg_color, 0.08);
+    background-color: alpha(@theme_fg_color, 0.07);
 }
 
+/* 选中行。
+ *
+ * 两条规矩，缺一条都会出问题：
+ *
+ * 1. 必须用 @theme_selected_bg_color / @theme_selected_fg_color 这一对。
+ *    它们是 GTK3 主题契约里**每个主题都必须定义**的，而且永远是配套的。
+ *    原来这里用的是 @theme_selected_bg_color 的源头 @accent_bg_color ——
+ *    那是 GTK4/libadwaita 引入的名字，GTK3 主题大多没定义它。GTK3 对
+ *    未定义的颜色变量是**静默丢弃整条声明**（不报错、不警告、不进日志），
+ *    所以 Windows-10 主题下这一整条规则等于不存在：点了一行，选中高亮
+ *    根本不出现，行动作条却显示「1 item selected」。
+ *
+ * 2. 背景和文字必须**一起**设。主题给 :selected 配的文字色是照它自己
+ *    那个饱和的选中底配的（Adwaita 是白色），只把背景改成浅色就会变成
+ *    白字压浅底 —— 这比没有高亮更糟。
+ */
 treeview.view.app-list:selected,
 treeview.view.app-list:selected:focus {
-    background-color: alpha(@accent_bg_color, 0.20);
+    background-color: @theme_selected_bg_color;
+    color: @theme_selected_fg_color;
 }
 
 /* 问题行 */
@@ -280,8 +311,8 @@ treeview.view.app-list:selected:focus {
 
 /* 刚被操作过的行：底色一闪后淡出（由代码移除类） */
 @keyframes row-flash {
-    0%   { background-color: alpha(@accent_bg_color, 0.42); }
-    100% { background-color: alpha(@accent_bg_color, 0.00); }
+    0%   { background-color: alpha(@theme_selected_bg_color, 0.42); }
+    100% { background-color: alpha(@theme_selected_bg_color, 0.00); }
 }
 
 .app-row-flash {
@@ -391,8 +422,8 @@ treeview.view.app-list:selected:focus {
 }
 
 .option-card:selected {
-    border-color: @accent_bg_color;
-    background-color: alpha(@accent_bg_color, 0.10);
+    border-color: @theme_selected_bg_color;
+    background-color: alpha(@theme_selected_bg_color, 0.10);
 }
 
 /* ── InfoBar ──────────────────────────────────────────────────────────────
@@ -411,8 +442,8 @@ infobar > revealer > box {
 }
 
 infobar.info {
-    background-color: alpha(@accent_bg_color, 0.14);
-    border-left: 3px solid @accent_bg_color;
+    background-color: alpha(@theme_selected_bg_color, 0.14);
+    border-left: 3px solid @theme_selected_bg_color;
 }
 
 infobar.warning {
@@ -475,8 +506,8 @@ infobar button {
 }
 
 infobar.info button {
-    background-color: shade(@accent_bg_color, 0.78);
-    border-color: shade(@accent_bg_color, 0.62);
+    background-color: shade(@theme_selected_bg_color, 0.78);
+    border-color: shade(@theme_selected_bg_color, 0.62);
 }
 
 infobar.error button {
@@ -592,7 +623,7 @@ scrolledwindow.filter-scroll scrollbar {
 }
 
 .mode-radio:checked {
-    color: @accent_bg_color;
+    color: @theme_selected_bg_color;
     font-weight: bold;
 }
 
