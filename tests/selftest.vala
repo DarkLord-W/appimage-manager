@@ -655,8 +655,13 @@ public int main (string[] args) {
     check (ref checks, ref failures, "保留带空格的原写法 Name = Foo Bar",
            claimed.contains ("Name = Foo Bar"),
            "被规范化成了 Name=Foo Bar");
+    // 版本号要用 APPMGR_VERSION，不要写字面量：这一行是
+    // Repair.append_markers() 现插进去的，带着**当前**版本号，写死之后
+    // 每次升版本这一项都会红，而失败信息只说「空行丢了」—— 指向的原因
+    // 跟真正的原因（版本号变了）完全不是一回事。
     check (ref checks, ref failures, "保留组内空行（作为与下一个组的分隔）",
-           claimed.contains ("X-AppImage-Manager-Version=1.0.0\n\n[Desktop Action NewWindow]"),
+           claimed.contains ("X-AppImage-Manager-Version=" + APPMGR_VERSION
+                             + "\n\n[Desktop Action NewWindow]"),
            "空行丢了");
     check (ref checks, ref failures, "完整保留 Desktop Action 组",
            claimed.contains ("[Desktop Action NewWindow]")
