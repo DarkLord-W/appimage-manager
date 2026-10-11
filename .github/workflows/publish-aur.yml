@@ -141,7 +141,7 @@ jobs:
       - name: 构建验证（makepkg + namcap）
         run: |
           set -euo pipefail
-          for p in appimage-manager appimage-manager-bin; do
+          for p in appimage-manager-gtk appimage-manager-gtk-bin; do
             echo "════ $p ════"
             su builder -c "cd '/tmp/stage/$p' && makepkg -s --noconfirm --cleanbuild"
 
@@ -180,7 +180,7 @@ jobs:
         if: success() && !inputs.dry_run
         run: |
           echo "✓ 两个包都已推送到 AUR（索引有几秒延迟，刚推完可能还看不到）"
-          echo "  https://aur.archlinux.org/packages/appimage-manager"
-          echo "  https://aur.archlinux.org/packages/appimage-manager-bin"
+          echo "  https://aur.archlinux.org/packages/appimage-manager-gtk"
+          echo "  https://aur.archlinux.org/packages/appimage-manager-gtk-bin"
           echo
           echo "  两者互相冲突（provides + conflicts），用户装其中一个即可。"

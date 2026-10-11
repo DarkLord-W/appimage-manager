@@ -121,7 +121,7 @@ jobs:
           useradd -m builder
           chown -R builder:builder "$GITHUB_WORKSPACE"
 
-          # 两个包都要验。appimage-manager-bin 的 PKGBUILD 里 sha256sums
+          # 两个包都要验。appimage-manager-gtk-bin 的 PKGBUILD 里 sha256sums
           # 是全零占位符（真值由 publish-aur.sh 在推送前填），不影响这里 ——
           # --printsrcinfo 只解析 PKGBUILD，不下载任何东西。
           rc=0
