@@ -14,8 +14,13 @@
 #   AUR_STAGE=/tmp/stage scripts/publish-aur.sh   # 只准备到目录，完全不碰 AUR
 #
 # 发的是两个包（AUR 上互相冲突，用户二选一）：
-#   appimage-manager      源码构建：要装 vala，编译约 1 分钟，会跑 258 项自测
-#   appimage-manager-bin  AppImage 解包：秒装，只依赖 gtk3 + json-glib
+#   appimage-manager-gtk      源码构建：要装 vala，编译约 1 分钟，会跑 258 项自测
+#   appimage-manager-gtk-bin  AppImage 解包：秒装，只依赖 gtk3 + json-glib
+#
+# 为什么带 -gtk：AUR 上 appimage-manager 这个名字被一个残留的 git 仓库占着
+# （AppImageCrafters 的 Go 版同名程序，包已删、仓库没清，推送一律被拒）。
+# -bin 后缀是准则的硬性要求（"prebuilt deliverables ... must use the -bin
+# suffix"），-gtk 则把它和那个 Go CLI 区分开。
 #
 # AUR_STAGE 是给 .github/workflows/publish-aur.yml 用的。**必须先填校验和
 # 再构建**：仓库里的 PKGBUILD 留的是全零占位符，拿它直接 `makepkg -s`
@@ -37,17 +42,42 @@ cd "$PROJECT_DIR"
 
 REPO_URL="https://github.com/DarkLord-W/appimage-manager"
 REPO_SLUG="${REPO_URL#https://github.com/}"
+AUR_GIT_BASE="${AUR_GIT_BASE:-ssh://aur@aur.archlinux.org}"
 DRY_RUN="${AUR_DRY_RUN:-}"
 STAGE_DIR="${AUR_STAGE:-}"
 
 # pkgbase:源目录:Release 里对应的资产名（要拿它的哈希）
+#
+# 为什么叫 -gtk：AUR 上 appimage-manager 这个名字被一个**残留的 git 仓库**
+# 占着 —— AppImageCrafters 的 Go 版同名程序（2020-08-03 的 Initial commit，
+# 作者 azubieta），它后来改名 appimage-cli-tool，AUR 上换了名字，但旧仓库
+# 没清干净。aurweb 数据库里查不到那个包（网页 404、RPC 0 条），可仓库还在
+# 且归原主人，推送一律被拒。-gtk 既避开了它，也说明这是 GTK 版，
+# 和那个 Go CLI 不是一回事。
 ALL_PKGS=(
-    "appimage-manager:packaging/aur:appimage-manager-VER-src.tar.gz"
-    "appimage-manager-bin:packaging/aur-bin:AppImage-Manager-VER-x86_64.AppImage"
+    "appimage-manager-gtk:packaging/aur:appimage-manager-VER-src.tar.gz"
+    "appimage-manager-gtk-bin:packaging/aur-bin:AppImage-Manager-VER-x86_64.AppImage"
 )
 
 die () { echo "  ✗ $*" >&2; exit 1; }
 say () { echo "  $*"; }
+
+# 临时目录统一登记，脚本退出时（正常结束或中途出错）一起清掉。
+#
+# 用 EXIT trap 而不是「subshell + `|| rc=$?` 事后清理」：
+# bash 会对 `||` 左边整个列表**禁用 errexit**，于是 subshell 里任何一步
+# 失败（git push 被拒、git commit 出错）都只是继续往下执行，最后那句
+# `say "✓ 已发布"` 返回 0，脚本以为成功了。这个坑真踩过 —— 推送被拒，
+# 日志里却是「✓ 已发布」，白排查两轮。在 subshell 里补 `set -e` 也没用，
+# 那个抑制标志会继承进去。详见 push_one。
+CLEANUP_DIRS=()
+cleanup_dirs () {
+    local d
+    for d in ${CLEANUP_DIRS[@]+"${CLEANUP_DIRS[@]}"}; do
+        rm -rf "$d"
+    done
+}
+trap cleanup_dirs EXIT
 
 # ── 参数 ─────────────────────────────────────────────────────────────────────
 VERSION=""
@@ -180,64 +210,112 @@ $(printf '%s\n' "$SUMS" | sed 's/^/      /')"
 push_one () {
     local pkgbase="$1" srcdir="$2" asset="$3"
 
-    local work rc=0
+    local work
     work="$(mktemp -d)"
+    CLEANUP_DIRS+=("$work")
 
     say "克隆 AUR 仓库 $pkgbase"
-    if ! git clone --quiet "ssh://aur@aur.archlinux.org/$pkgbase.git" \
+    # AUR_GIT_BASE 可覆盖，是为了能拿一个本地裸仓库把「预检 → 提交 → 推送 →
+    # 回读校验」整条链路真跑一遍，不用往真的 AUR 推东西。
+    if ! git clone --quiet "$AUR_GIT_BASE/$pkgbase.git" \
             "$work/$pkgbase" 2>"$work/err"; then
         sed 's/^/      /' "$work/err" >&2
-        rm -rf "$work"
         die "克隆 $pkgbase 失败。检查 SSH 配置和 AUR 账号
 
   ssh -T aur@aur.archlinux.org   # 应回 'Successfully authenticated'"
     fi
 
-    (
-        cd "$work/$pkgbase"
-        # 准则只收 master 分支。空仓库时 HEAD 本来就指向 master，
-        # 这一行主要是防 clone 下来停在别的分支上。
-        git checkout -q -B master 2>/dev/null || true
+    cd "$work/$pkgbase"
 
-        prepare_one "$pkgbase" "$PROJECT_DIR/$srcdir" \
-                    "${asset//VER/$VERSION}" "$work/$pkgbase"
+    # ── 预检：远端那个仓库是不是我们的 ──────────────────────────────────
+    #
+    # AUR 上会留下「已删除包的 git 仓库」：aurweb 数据库里查不到（网页 404、
+    # RPC 返回 0 条），但仓库还在、归原主人 —— clone 得到、推送被拒。
+    # 没有这一步的话，要等最后 push 才炸，而 push 被拒的原因（不是你的仓库）
+    # 在报错里并不明显。看一眼远端已有提交的作者就能提前说清楚。
+    #
+    # 这不是假想：appimage-manager 就撞上了（AppImageCrafters 的 Go 版同名
+    # 程序，2020 年的 Initial commit，包已删、仓库没清）。
+    if git rev-parse --verify -q origin/master >/dev/null 2>&1; then
+        local foreign
+        # || true 不能省：署名全是我们的时 grep 返回 1，pipefail 下这个赋值
+        # 会失败，set -e 直接把脚本掐断 —— 表现是「一切正常但什么都没发生」。
+        foreign="$(git log --format='%ae' origin/master \
+                   | grep -vx "42199147+DarkLord-W@users.noreply.github.com" \
+                   | head -1 || true)"
+        if [ -n "$foreign" ]; then
+            echo "  远端已有提交历史，且不是本项目的署名："
+            git log --format='      %h  %ad  %an <%ae>  %s' --date=short \
+                origin/master | head -5
+            die "$pkgbase: 这个 pkgbase 的 git 仓库不是我们的（作者 $foreign）。
 
-        # 准则要求仓库里只放 PKGBUILD / .SRCINFO / LICENSE / .gitignore
-        # 这几个文件（外加 .git 本身）。混进别的会被删号处理。
-        extra="$(ls -A | grep -vxE '\.git|PKGBUILD|\.SRCINFO|LICENSE|\.gitignore' || true)"
-        [ -z "$extra" ] || die "$pkgbase: 工作目录里有不该提交的东西：
+  AUR 上常见这种情况：包已经删了、网站查不到，但 git 仓库没清干净，
+  推送一定会被拒。两条路：
+    · 向 AUR 申请删除残留仓库（#archlinux-aur 或 aur-general 邮件列表）
+    · 换一个 pkgbase 名字"
+        fi
+    fi
+
+    # 准则只收 master 分支。空仓库时 HEAD 本来就指向 master，
+    # 这一行主要是防 clone 下来停在别的分支上。
+    git checkout -q -B master 2>/dev/null || true
+
+    prepare_one "$pkgbase" "$PROJECT_DIR/$srcdir" \
+                "${asset//VER/$VERSION}" "$work/$pkgbase"
+
+    # 准则要求仓库里只放 PKGBUILD / .SRCINFO / LICENSE / .gitignore
+    # 这几个文件（外加 .git 本身）。混进别的会被删号处理。
+    local extra
+    extra="$(ls -A | grep -vxE '\.git|PKGBUILD|\.SRCINFO|LICENSE|\.gitignore' || true)"
+    [ -z "$extra" ] || die "$pkgbase: 工作目录里有不该提交的东西：
 $(printf '%s\n' "$extra" | sed 's/^/      /')"
 
-        # 提交会用全局 git 身份署名，而且推送后很难修改 ——
-        # 所以这里显式设成本机的身份，不依赖全局配置。
-        git config user.name  "DarkLord-W"
-        git config user.email "42199147+DarkLord-W@users.noreply.github.com"
+    # 少了 .SRCINFO，aurweb 不会登记这个包：git 层推送会成功，但网页一直
+    # 404 —— 比推送被拒更难查，因为推送的返回码是 0。
+    [ -s .SRCINFO ] || die "$pkgbase: .SRCINFO 缺失或为空"
 
-        git add -A
-        echo "  将要提交："
-        git status --short | sed 's/^/      /'
+    # 提交会用全局 git 身份署名，而且推送后很难修改 ——
+    # 所以这里显式设成本机的身份，不依赖全局配置。
+    git config user.name  "DarkLord-W"
+    git config user.email "42199147+DarkLord-W@users.noreply.github.com"
 
-        if [ -n "$DRY_RUN" ]; then
-            say "AUR_DRY_RUN=1，停在这里（临时目录随脚本退出一起删掉）"
-            exit 0
-        fi
-        if git diff --cached --quiet; then
-            say "和 AUR 上现有的内容一致，无需提交"
-            exit 0
-        fi
-        if git rev-parse --verify HEAD >/dev/null 2>&1; then
-            git commit -q -m "upstream release v$VERSION"
-        else
-            git commit -q -m "initial upload: $pkgbase $VERSION"
-        fi
-        say "已提交：$(git log --oneline -1)"
-        say "推送…"
-        git push --quiet origin master
-        say "✓ $pkgbase 已发布"
-    ) || rc=$?
+    git add -A
+    echo "  将要提交："
+    git status --short | sed 's/^/      /'
 
-    rm -rf "$work"
-    return $rc
+    if [ -n "$DRY_RUN" ]; then
+        say "AUR_DRY_RUN=1，停在这里（临时目录随脚本退出一起删掉）"
+        cd "$PROJECT_DIR"
+        return 0
+    fi
+    if git diff --cached --quiet; then
+        say "和 AUR 上现有的内容一致，无需提交"
+        cd "$PROJECT_DIR"
+        return 0
+    fi
+    if git rev-parse --verify -q HEAD >/dev/null; then
+        git commit -q -m "upstream release v$VERSION"
+    else
+        git commit -q -m "initial upload: $pkgbase $VERSION"
+    fi
+    say "已提交：$(git log --oneline -1)"
+
+    say "推送…"
+    git push origin master
+
+    # 回读校验：`git push` 返回 0 只说明客户端没报错，真正的产物是远端
+    # 那个 ref。直接问远端要答案，不靠猜。
+    local local_head remote_head
+    local_head="$(git rev-parse HEAD)"
+    remote_head="$(git ls-remote --heads origin master 2>/dev/null \
+                   | awk '{print $1}' || true)"
+    if [ "$remote_head" != "$local_head" ]; then
+        die "$pkgbase: 推送后回读不一致 —— 本地 ${local_head:0:8}，远端 ${remote_head:0:12}。
+  推送没有真正落地，AUR 上不会有这个包。"
+    fi
+
+    say "✓ $pkgbase 已发布（远端 master ${local_head:0:8}）"
+    cd "$PROJECT_DIR"
 }
 
 # ── 逐个包处理 ───────────────────────────────────────────────────────────────
@@ -248,8 +326,8 @@ for entry in "${ALL_PKGS[@]}"; do
     asset="${rest#*:}"
 
     case "$WANT" in
-        src) [ "$pkgbase" = "appimage-manager" ]     || continue ;;
-        bin) [ "$pkgbase" = "appimage-manager-bin" ] || continue ;;
+        src) [ "$pkgbase" = "appimage-manager-gtk" ]     || continue ;;
+        bin) [ "$pkgbase" = "appimage-manager-gtk-bin" ] || continue ;;
     esac
 
     echo
@@ -269,6 +347,6 @@ elif [ -n "$DRY_RUN" ]; then
     say "（AUR_DRY_RUN=1，没有真的推送）"
 else
     say "AUR 索引有几秒延迟，刚推完可能还看不到："
-    say "  https://aur.archlinux.org/packages/appimage-manager"
-    say "  https://aur.archlinux.org/packages/appimage-manager-bin"
+    say "  https://aur.archlinux.org/packages/appimage-manager-gtk"
+    say "  https://aur.archlinux.org/packages/appimage-manager-gtk-bin"
 fi
